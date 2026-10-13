@@ -53,7 +53,5 @@ export default function contribute(server: PluginServerContext) {
 
   console.log(`[baton] running; data dir: ${dataDir}`);
 
-  return () => {
-    controller.dispose();
-  };
+  return () => controller.dispose();
 }

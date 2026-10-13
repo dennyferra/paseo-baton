@@ -20,12 +20,28 @@ export function buildHandoffPrompt(absPath: string): string {
 }
 
 export function extractTitleFromDocument(text: string, fallback: string): string {
-  const firstHeading = text.match(/^#\s+(.+)$/m);
-  const firstLine = text
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  const raw = firstHeading?.[1]?.trim() || firstLine || fallback;
-  const cleaned = raw.replace(/^#+\s*/, "").trim();
+  const lines = text.split(/\r?\n/);
+  let raw: string | null = null;
+  let inTask = false;
+  for (const line of lines) {
+    if (/^#\s*Task\s*$/i.test(line)) {
+      inTask = true;
+      continue;
+    }
+    if (!inTask) continue;
+    if (/^#\s/.test(line)) break;
+    if (line.trim()) {
+      raw = line.trim();
+      break;
+    }
+  }
+  if (!raw) {
+    const firstHeading = text.match(/^#\s+(.+)$/m);
+    raw = firstHeading?.[1]?.trim() ?? null;
+  }
+  if (!raw) {
+    raw = lines.map((line) => line.trim()).find((line) => line.length > 0) ?? fallback;
+  }
+  const cleaned = (raw ?? fallback).replace(/^#+\s*/, "").trim();
   return cleaned.slice(0, 80) || fallback;
 }

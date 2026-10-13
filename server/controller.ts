@@ -175,12 +175,13 @@ export class BatonController {
     return { recovered, handoffs };
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.disposed = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const timer of this.fallbackTimers.values()) clearTimeout(timer);
     this.timers.clear();
     this.fallbackTimers.clear();
+    await this.writeQueue;
   }
 
   private async doRecover(paseo: PaseoApi): Promise<void> {
@@ -263,7 +264,7 @@ export class BatonController {
       marginMs: DEFAULT_SAFETY_MARGIN_MS,
     });
     this.entries.set(agent.id, entry);
-    this.persistEntries();
+    await this.persistEntries();
     this.setTimer(agent.id, entry.fireAt - now, entry);
   }
 
@@ -466,7 +467,7 @@ export class BatonController {
     }
   }
 
-  private persistEntries(): void {
+  private persistEntries(): Promise<void> {
     const snapshot: BatonState = {};
     for (const [agentId, entry] of this.entries) snapshot[agentId] = entry;
     this.writeQueue = this.writeQueue
@@ -474,5 +475,6 @@ export class BatonController {
       .catch((error: unknown) => {
         this.log(`Writing baton state failed: ${String(error)}`);
       });
+    return this.writeQueue;
   }
 }

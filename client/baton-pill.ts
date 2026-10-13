@@ -1,4 +1,3 @@
-import type { PaseoAgentTimelineEvent } from "@getpaseo/client";
 import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { batonRowSchema, continueHandoffRpc } from "../shared/baton";
 
@@ -75,25 +74,21 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
     );
   }
 
-  function handleTimelineEvent(agent: AgentLike, event: PaseoAgentTimelineEvent): void {
-    if (event.event.type !== "timeline") return;
-    const item = event.event.item;
-    if (item.type !== "plugin" || item.kind !== "baton-ready") return;
-    const parsed = batonRowSchema.safeParse(item.data);
-    if (!parsed.success) return;
-    registerPill({
-      agentId: agent.id,
-      workspaceId: agent.workspaceId ?? "",
-      path: parsed.data.path,
-      continuedAgentId: parsed.data.continuedAgentId,
-    });
-  }
-
   function observeAgent(agent: AgentLike): void {
     if (!agent.workspaceId || agent.archivedAt) return;
     if (subscriptions.has(agent.id)) return;
-    const release = client.paseo.agents.ref(agent.id).timeline.subscribe((event) => {
-      handleTimelineEvent(agent, event);
+    const release = client.paseo.agents.ref(agent.id).timeline.subscribe((stream) => {
+      if (stream.event.type !== "timeline") return;
+      const item = stream.event.item;
+      if (item.type !== "plugin" || item.kind !== "baton-ready") return;
+      const parsed = batonRowSchema.safeParse(item.data);
+      if (!parsed.success) return;
+      registerPill({
+        agentId: agent.id,
+        workspaceId: agent.workspaceId ?? "",
+        path: parsed.data.path,
+        continuedAgentId: parsed.data.continuedAgentId,
+      });
     });
     subscriptions.set(agent.id, release);
   }
