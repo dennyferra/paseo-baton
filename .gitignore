@@ -1,0 +1,5 @@
+node_modules/
+.paseo/handoffs/
+baton-state.json
+*.tmp
+*.log
