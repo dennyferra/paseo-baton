@@ -48,8 +48,8 @@ function settings(values = { idleTtlMinutes: 5 }) {
 function stubPaseo() {
   const calls: string[] = [];
   const created: Array<Record<string, unknown>> = [];
-  const agents: Array<{ id: string; status: string; provider: string; workspaceId: string }> = [
-    { id: "agent-a", status: "idle", provider: "claude", workspaceId: "wks-a" },
+  const agents: Array<{ id: string; status: string; provider: string; model: string | null; workspaceId: string }> = [
+    { id: "agent-a", status: "idle", provider: "claude", model: "claude-sonnet-5-5", workspaceId: "wks-a" },
   ];
   const paseo = {
     agents: {
@@ -167,6 +167,7 @@ describe("BatonController", () => {
     expect(result.title).toContain("Fix the bug");
     expect(created[0].title).toBe("[Handoff] Fix the bug.");
     expect(created[0].prompt).toContain(HANDOFF_PATH);
+    expect(created[0].config).toEqual({ provider: "claude/claude-sonnet-5-5" });
     expect(calls).toContain("append:agent-a");
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
@@ -186,6 +187,31 @@ describe("BatonController", () => {
     await expect(controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never)).rejects.toThrow(
       "No handoff is ready",
     );
+    await controller.dispose();
+  });
+
+  it("opens only a known done handoff path", async () => {
+    const opened: string[] = [];
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\n\nFix the bug.",
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/paseo-baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+      openFile: async (filePath) => {
+        opened.push(filePath);
+      },
+    });
+    const { paseo } = stubPaseo();
+    const result = await controller.openHandoff(HANDOFF_PATH, paseo as never);
+    expect(result.opened).toBe(true);
+    expect(opened).toEqual([HANDOFF_PATH]);
+    await expect(controller.openHandoff("/etc/passwd", paseo as never)).rejects.toThrow("Unknown handoff path");
+    expect(opened).toEqual([HANDOFF_PATH]);
     await controller.dispose();
   });
 });

@@ -2,7 +2,7 @@ import { defineSettings } from "@getpaseo/plugin";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { BatonController } from "./server/controller";
 import { resolveDaemonHome, resolveDataDir } from "./server/paths";
-import { batonSettingsSchema, continueHandoffRpc, wakeRpc } from "./shared/baton";
+import { batonSettingsSchema, continueHandoffRpc, openHandoffRpc, wakeRpc } from "./shared/baton";
 
 export default function contribute(server: PluginServerContext) {
   const dataDir = resolveDataDir(resolveDaemonHome());
@@ -40,6 +40,10 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(continueHandoffRpc, (input, context) =>
     controller.continue(input, context.paseo),
+  );
+
+  server.handle(openHandoffRpc, (input, context) =>
+    controller.openHandoff(input.path, context.paseo),
   );
 
   server.handle(wakeRpc, async (_input, context) => {

@@ -66,6 +66,16 @@ export const continueHandoffRpc = defineRpc({
   }),
 });
 
+export const openHandoffRpc = defineRpc({
+  name: "baton.open",
+  input: z.object({
+    path: z.string(),
+  }),
+  output: z.object({
+    opened: z.boolean(),
+  }),
+});
+
 export const handoffInfoSchema = z.object({
   agentId: z.string(),
   workspaceId: z.string(),

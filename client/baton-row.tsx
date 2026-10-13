@@ -1,10 +1,16 @@
 import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import type { z } from "zod";
 import { batonRowSchema } from "../shared/baton";
 
 type BatonRowData = z.output<typeof batonRowSchema>;
+
+let openHandoff: ((path: string) => Promise<unknown>) | null = null;
+
+export function setOpenHandoff(open: (path: string) => Promise<unknown>): void {
+  openHandoff = open;
+}
 
 export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonRowData>) {
   const data = item.data;
@@ -24,12 +30,13 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
         fontSize: layout.compact ? 13 : 14,
         fontWeight: "600" as const,
       },
-      body: {
-        color: theme.colors.foregroundMuted,
+      path: {
+        color: theme.colors.accent,
         fontSize: layout.compact ? 12 : 13,
+        textDecorationLine: "underline" as const,
       },
       hint: {
-        color: theme.colors.accent,
+        color: theme.colors.foregroundMuted,
         fontSize: layout.compact ? 12 : 13,
       },
     }),
@@ -39,9 +46,19 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Handoff saved</Text>
-      <Text style={styles.body} numberOfLines={2}>
-        {data.path}
-      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open the handoff file"
+        onPress={() => {
+          if (openHandoff) void openHandoff(data.path).catch((error: unknown) => {
+            console.error(`[baton] opening handoff failed: ${String(error)}`);
+          });
+        }}
+      >
+        <Text style={styles.path} numberOfLines={2}>
+          {data.path}
+        </Text>
+      </Pressable>
       {data.continuedAgentId ? (
         <Text style={styles.hint}>Continued in agent {data.continuedAgentId}</Text>
       ) : (

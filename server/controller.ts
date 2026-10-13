@@ -1,7 +1,9 @@
 import type { PaseoApi, PaseoAgent } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { PluginSettings } from "@getpaseo/plugin/server";
+import { execFile } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { BatonEntry, BatonState, HandoffInfo } from "../shared/baton";
 import { batonSettingsSchema } from "../shared/baton";
 import {
@@ -33,6 +35,23 @@ export interface BatonControllerDeps {
   log(message: string): void;
   io?: BatonStoreIo;
   now?: () => number;
+  openFile?: (filePath: string) => Promise<void>;
+}
+
+function buildProviderModel(provider: string, model: string | null): string {
+  if (provider.includes("/")) return provider;
+  return model ? `${provider}/${model}` : provider;
+}
+
+async function openFileWithOs(filePath: string): Promise<void> {
+  const execFileAsync = promisify(execFile);
+  if (process.platform === "darwin") {
+    await execFileAsync("open", [filePath]);
+  } else if (process.platform === "win32") {
+    await execFileAsync("cmd", ["/c", "start", "", filePath]);
+  } else {
+    await execFileAsync("xdg-open", [filePath]);
+  }
 }
 
 export class BatonController {
@@ -41,6 +60,7 @@ export class BatonController {
   private readonly log: (message: string) => void;
   private readonly io: BatonStoreIo;
   private readonly now: () => number;
+  private readonly openFile: (filePath: string) => Promise<void>;
   private readonly stateFile: string;
   private paseo: PaseoApi | null = null;
   private entries = new Map<string, BatonEntry>();
@@ -60,6 +80,7 @@ export class BatonController {
     this.log = deps.log;
     this.io = deps.io ?? nodeStoreIo;
     this.now = deps.now ?? Date.now;
+    this.openFile = deps.openFile ?? openFileWithOs;
     this.stateFile = resolveStateFile(this.dataDir);
   }
 
@@ -141,8 +162,14 @@ export class BatonController {
       throw new Error("The handoff file is missing.");
     }
     const title = extractTitleFromDocument(text, "untitled task");
+    const configProvider = buildProviderModel(source.agent.provider, source.agent.model);
+    if (!configProvider.includes("/")) {
+      throw new Error(
+        `Cannot determine a provider/model for agent ${input.agentId}; provider=${source.agent.provider}, model=${source.agent.model ?? "none"}.`,
+      );
+    }
     const created = await paseo.workspaces.ref(workspaceId).agents.create({
-      config: { provider: source.agent.provider },
+      config: { provider: configProvider },
       title: `[Handoff] ${title}`,
       prompt: `Read ${entry.path} and continue the task.`,
     });
@@ -173,6 +200,24 @@ export class BatonController {
       }
     }
     return { recovered, handoffs };
+  }
+
+  async openHandoff(pathToOpen: string, paseo: PaseoApi): Promise<{ opened: boolean }> {
+    this.setPaseo(paseo);
+    await this.ensureRecovered(paseo);
+    const entry = [...this.entries.values()].find(
+      (candidate) => candidate.status === "done" && candidate.path === pathToOpen,
+    );
+    if (!entry) throw new Error("Unknown handoff path.");
+    let exists = false;
+    try {
+      exists = await this.io.exists(pathToOpen);
+    } catch (error: unknown) {
+      this.log(`Checking handoff file failed: ${String(error)}`);
+    }
+    if (!exists) throw new Error("The handoff file is missing.");
+    await this.openFile(pathToOpen);
+    return { opened: true };
   }
 
   async dispose(): Promise<void> {

@@ -1,7 +1,7 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { createBatonPills } from "./client/baton-pill";
-import { BatonRow } from "./client/baton-row";
-import { batonRowSchema, wakeRpc } from "./shared/baton";
+import { BatonRow, setOpenHandoff } from "./client/baton-row";
+import { batonRowSchema, openHandoffRpc, wakeRpc } from "./shared/baton";
 
 export default function contribute(client: PluginClientContext) {
   client.addTimelineRenderer({
@@ -10,6 +10,8 @@ export default function contribute(client: PluginClientContext) {
     schema: batonRowSchema,
     Component: BatonRow,
   });
+
+  setOpenHandoff((path) => client.rpc(openHandoffRpc, { path }));
 
   const pills = createBatonPills({ client });
 
