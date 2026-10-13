@@ -22,16 +22,25 @@ which agent continued.
 
 ## Setup
 
-Requires Paseo 0.11.2 or newer. No accounts, tokens, or external tools. The idle delay defaults to
-5 minutes and is configurable in the plugin settings.
+Requires Paseo 0.11.2 or newer. No accounts, tokens, or external tools. Settings are configurable
+in the plugin settings.
+
+## Settings
+
+The idle delay (`idleTtlMinutes`, default 5) sets how long an agent must sit idle before a handoff
+is written. It should stay just under your provider's prompt cache window. The safety margin
+(`safetyMarginSeconds`, default 30) sets how long before the cache expires the handoff runs, to make
+sure the write reuses the cached context. A handoff provider model (`handoffProviderModel`, optional)
+can be set to have a short-lived agent with that model write the handoff instead of the idle agent;
+leave it empty to keep the idle agent writing its own handoff. Workspaces listed in
+`ignoredWorkspaceIds` never produce handoffs, which is useful for throwaway or always-running
+workspaces.
 
 ## Capabilities and limits
 
-The idle delay sets how long an agent must sit idle before a handoff is written. It should stay just
-under your provider's prompt cache window. Entries persist in a JSON file under the daemon home, so
-a daemon restart recovers pending handoffs, skips expired ones, and re-appends chat rows for saved
-handoffs. A handoff is written at most once per idle period.
-
-Done entries are pruned when the agent is archived or after 7 days. Chat rows live in daemon memory
-and are restored after a daemon restart. Baton reads agent lifecycle events and writes handoff files
-and its own state file; it never reads credentials and never logs secrets.
+Entries persist in a JSON file under the daemon home, so a daemon restart recovers pending handoffs,
+skips expired ones, and re-appends chat rows for saved handoffs. A handoff is written at most once
+per idle period. Subagent tool calls are not handed off because they are provider child sessions
+rather than agents. Done entries are pruned when the agent is archived or after 7 days. Chat rows
+live in daemon memory and are restored after a daemon restart. Baton reads agent lifecycle events
+and writes handoff files and its own state file; it never reads credentials and never logs secrets.

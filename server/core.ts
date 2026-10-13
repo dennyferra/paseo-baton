@@ -64,6 +64,7 @@ export interface PlanRecoveryInput {
   state: BatonState;
   now: number;
   knownAgentIds: ReadonlySet<string>;
+  ignoredWorkspaceIds?: ReadonlySet<string>;
   handoffPath: (agentId: string) => string | null;
   retentionMs: number;
 }
@@ -104,6 +105,7 @@ function decideEntry(
     return age >= input.retentionMs ? { kind: "drop" } : { kind: "keepSkipped" };
   }
   if (!input.knownAgentIds.has(agentId)) return { kind: "drop" };
+  if (input.ignoredWorkspaceIds?.has(entry.workspaceId)) return { kind: "drop" };
   if (entry.status === "writing") {
     const existing = input.handoffPath(agentId);
     if (existing) return { kind: "recoverDone", path: existing };

@@ -75,11 +75,12 @@ describe("isExpired", () => {
   });
 });
 
-function plan(state: Record<string, unknown>, options: { now?: number; known?: string[] } = {}) {
+function plan(state: Record<string, unknown>, options: { now?: number; known?: string[]; ignored?: string[] } = {}) {
   return planRecovery({
     state: state as never,
     now: options.now ?? NOW,
     knownAgentIds: new Set(options.known ?? ["agent-a", "agent-b"]),
+    ignoredWorkspaceIds: new Set(options.ignored ?? []),
     handoffPath: () => null,
     retentionMs: 7 * 24 * 60 * 60 * 1000,
   });
@@ -94,6 +95,12 @@ describe("planRecovery", () => {
     const result = plan({ "agent-ghost": pending({ agentId: "agent-ghost" }) }, { known: [] });
     expect(actionFor(result, "agent-ghost")).toEqual({ kind: "drop" });
     expect(result.state["agent-ghost"]).toBeUndefined();
+  });
+
+  it("drops pending entries in ignored workspaces", () => {
+    const result = plan({ "agent-a": pending() }, { ignored: ["workspace-a"] });
+    expect(actionFor(result, "agent-a")).toEqual({ kind: "drop" });
+    expect(result.state["agent-a"]).toBeUndefined();
   });
 
   it("keeps recent done entries for row re-append", () => {

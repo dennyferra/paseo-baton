@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BatonStoreIo } from "../server/store";
 import { BatonController } from "../server/controller";
-import { batonStateSchema } from "../shared/baton";
+import { batonStateSchema, type BatonSettings } from "../shared/baton";
 
 const NOW = 1_000_000;
 const HANDOFF_PATH = "/work/.paseo/handoffs/agent-a.md";
@@ -38,16 +38,25 @@ function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files:
   };
 }
 
-function settings(values = { idleTtlMinutes: 5 }) {
+function settings(
+  values: BatonSettings = {
+    idleTtlMinutes: 5,
+    safetyMarginSeconds: 30,
+    handoffProviderModel: "",
+    ignoredWorkspaceIds: [],
+  },
+) {
   return {
     read: async () => ({ status: "ready" as const, revision: "r", values }),
     subscribe: () => () => {},
   };
 }
 
-function stubPaseo() {
+function stubPaseo(opts: { createId?: string } = {}) {
+  const createId = opts.createId ?? "agent-continued";
   const calls: string[] = [];
   const created: Array<Record<string, unknown>> = [];
+  const archived: string[] = [];
   const agents: Array<{ id: string; status: string; provider: string; model: string | null; workspaceId: string }> = [
     { id: "agent-a", status: "idle", provider: "claude", model: "claude-sonnet-5-5", workspaceId: "wks-a" },
   ];
@@ -61,6 +70,11 @@ function stubPaseo() {
         },
         send: async () => {
           calls.push(`send:${agentId}`);
+        },
+        archive: async () => {
+          archived.push(agentId);
+          calls.push(`archive:${agentId}`);
+          return { archivedAt: new Date().toISOString() };
         },
         timeline: {
           append: async () => {
@@ -77,13 +91,13 @@ function stubPaseo() {
           create: async (options: Record<string, unknown>) => {
             calls.push(`create:${workspaceId}`);
             created.push(options);
-            return { id: "agent-continued", ...options };
+            return { id: createId, ...options };
           },
         },
       }),
     },
   };
-  return { paseo, calls, created };
+  return { paseo, calls, created, archived };
 }
 
 const STATE_FILE = "/home/.paseo/paseo-baton/baton-state.json";
@@ -114,7 +128,7 @@ describe("BatonController", () => {
     });
     const { paseo } = stubPaseo();
     await controller.onTurnEnded(
-      { id: "agent-a", workspaceId: "wks-a", cwd: "/work" },
+      { id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
       [],
       paseo as never,
     );
@@ -139,7 +153,7 @@ describe("BatonController", () => {
       now: () => NOW,
     });
     const { paseo } = stubPaseo();
-    await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work" }, [], paseo as never);
+    await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
     controller.onTurnStarted({ id: "agent-a" });
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
@@ -212,6 +226,103 @@ describe("BatonController", () => {
     expect(opened).toEqual([HANDOFF_PATH]);
     await expect(controller.openHandoff("/etc/passwd", paseo as never)).rejects.toThrow("Unknown handoff path");
     expect(opened).toEqual([HANDOFF_PATH]);
+    await controller.dispose();
+  });
+
+  it("respects the configured safety margin when scheduling", async () => {
+    const io = memoryIo();
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/paseo-baton",
+      settings: settings({ idleTtlMinutes: 5, safetyMarginSeconds: 60, handoffProviderModel: "", ignoredWorkspaceIds: [] }),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo } = stubPaseo();
+    await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+    const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+    const entry = state["agent-a"];
+    expect(entry.fireAt).toBe(entry.deadline - 60 * 1000);
+    await controller.dispose();
+  });
+
+  it("does not schedule handoffs for subagents or ignored workspaces", async () => {
+    const io = memoryIo();
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/paseo-baton",
+      settings: settings({ idleTtlMinutes: 5, safetyMarginSeconds: 30, handoffProviderModel: "", ignoredWorkspaceIds: ["wks-a"] }),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo } = stubPaseo();
+    await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: "parent-1" }, [], paseo as never);
+    await controller.onTurnEnded({ id: "agent-b", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+    await controller.dispose();
+    const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+    expect(Object.keys(state)).toEqual([]);
+  });
+
+  it("spawns a handoff writer with the configured model and finalizes from its turn", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({
+        "agent-a": {
+          agentId: "agent-a",
+          workspaceId: "wks-a",
+          cwd: "/work",
+          idleSince: NOW - 60_000,
+          fireAt: NOW,
+          deadline: NOW + 60_000,
+          updatedAt: NOW - 60_000,
+          status: "pending",
+        },
+      }),
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/paseo-baton",
+      settings: settings({
+        idleTtlMinutes: 5,
+        safetyMarginSeconds: 30,
+        handoffProviderModel: "claude/claude-sonnet-5-5",
+        ignoredWorkspaceIds: [],
+      }),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo, calls, archived } = stubPaseo({ createId: "writer-1" });
+    await controller.ensureRecovered(paseo as never);
+    await controller.onTurnEnded(
+      { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
+      [{ type: "assistant_message", text: "written" }],
+      paseo as never,
+    );
+    expect(calls).toContain("create:wks-a");
+    expect(archived).toContain("writer-1");
+    await controller.dispose();
+    const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+    expect(state["agent-a"].status).toBe("done");
+    expect(state["agent-a"].path).toContain("agent-a.md");
+  });
+
+  it("migrates a legacy state file into the plugin data directory", async () => {
+    const legacyFile = "/home/.paseo/paseo-baton/baton-state.json";
+    const newFile = "/home/.paseo/plugin-data/paseo-baton/baton-state.json";
+    const io = memoryIo({ [legacyFile]: JSON.stringify({ "agent-a": doneEntry() }) });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/paseo-baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+      home: "/home/.paseo",
+    });
+    const { paseo } = stubPaseo();
+    await controller.ensureRecovered(paseo as never);
+    expect(io.files.has(legacyFile)).toBe(false);
+    expect(io.files.has(newFile)).toBe(true);
+    const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(newFile) ?? "{}"));
+    expect(state["agent-a"].status).toBe("done");
     await controller.dispose();
   });
 });

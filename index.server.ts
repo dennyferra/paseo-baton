@@ -10,8 +10,15 @@ export default function contribute(server: PluginServerContext) {
     defineSettings({
       id: "baton",
       scope: "host",
-      version: 1,
+      version: 2,
       schema: batonSettingsSchema,
+      migrate: (values) => ({
+        idleTtlMinutes: 5,
+        safetyMarginSeconds: 30,
+        handoffProviderModel: "",
+        ignoredWorkspaceIds: [],
+        ...(values && typeof values === "object" ? (values as Record<string, unknown>) : {}),
+      }),
     }),
   );
   const controller = new BatonController({

@@ -44,8 +44,14 @@ export const MIN_FIRE_DELAY_MS = 1000;
 
 export const batonSettingsSchema = z.object({
   idleTtlMinutes: z.number().int().min(1).max(1440).default(5),
+  safetyMarginSeconds: z.number().int().min(5).max(3600).default(30),
+  handoffProviderModel: z.string().trim().max(200).default(""),
+  ignoredWorkspaceIds: z.array(z.string()).default([]),
 });
 export type BatonSettings = z.infer<typeof batonSettingsSchema>;
+
+export const BATON_WRITER_LABEL = "baton-writer";
+export const BATON_WRITER_TITLE = "[Handoff writer]";
 
 export const batonRowSchema = z.object({
   agentId: z.string(),

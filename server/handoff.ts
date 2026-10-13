@@ -19,6 +19,31 @@ export function buildHandoffPrompt(absPath: string): string {
   ].join("\n");
 }
 
+export function buildWriterHandoffPrompt(absPath: string, draft: string): string {
+  return [
+    `Write a handoff document to ${absPath} so a fresh agent can continue the task described below without asking the original agent anything.`,
+    "",
+    "Create the file if it does not exist. Use exactly these markdown headings:",
+    "",
+    "# Task",
+    "# Context",
+    "# Relevant files",
+    "# Current state",
+    "# What was tried",
+    "# Decisions",
+    "# Acceptance criteria",
+    "# Constraints",
+    "",
+    "Fill every section from the machine draft below, correcting and expanding it with real detail. Be concrete: name the files changed, what works, what is broken, and the single next step. Do not modify any other files and do not start new work.",
+    "",
+    "When the file is written, reply with only the absolute path.",
+    "",
+    "## Machine draft",
+    "",
+    draft,
+  ].join("\n");
+}
+
 export function extractTitleFromDocument(text: string, fallback: string): string {
   const lines = text.split(/\r?\n/);
   let raw: string | null = null;

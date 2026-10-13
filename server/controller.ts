@@ -4,8 +4,8 @@ import type { PluginSettings } from "@getpaseo/plugin/server";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { BatonEntry, BatonState, HandoffInfo } from "../shared/baton";
-import { batonSettingsSchema } from "../shared/baton";
+import type { BatonEntry, BatonState, BatonSettings, HandoffInfo } from "../shared/baton";
+import { batonSettingsSchema, BATON_WRITER_LABEL, BATON_WRITER_TITLE } from "../shared/baton";
 import {
   DEFAULT_RETENTION_MS,
   DEFAULT_SAFETY_MARGIN_MS,
@@ -20,8 +20,8 @@ import {
   markWriting,
   planRecovery,
 } from "./core";
-import { buildHandoffPrompt, extractTitleFromDocument } from "./handoff";
-import { handoffPathFor, resolveStateFile } from "./paths";
+import { buildHandoffPrompt, buildWriterHandoffPrompt, extractTitleFromDocument } from "./handoff";
+import { handoffPathFor, legacyStateFile, resolveDaemonHome, resolveStateFile } from "./paths";
 import { loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
 
@@ -36,6 +36,7 @@ export interface BatonControllerDeps {
   io?: BatonStoreIo;
   now?: () => number;
   openFile?: (filePath: string) => Promise<void>;
+  home?: string;
 }
 
 function buildProviderModel(provider: string, model: string | null): string {
@@ -62,6 +63,7 @@ export class BatonController {
   private readonly now: () => number;
   private readonly openFile: (filePath: string) => Promise<void>;
   private readonly stateFile: string;
+  private readonly home: string;
   private paseo: PaseoApi | null = null;
   private entries = new Map<string, BatonEntry>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -69,6 +71,8 @@ export class BatonController {
   private pendingHandoff = new Set<string>();
   private lastTimeline = new Map<string, readonly AgentTimelineItem[]>();
   private workspaceDirCache = new Map<string, string | null>();
+  private writerAgentIds = new Set<string>();
+  private writerByAgentId = new Map<string, string>();
   private recoveryPromise: Promise<void> | null = null;
   private recovered = false;
   private disposed = false;
@@ -82,6 +86,33 @@ export class BatonController {
     this.now = deps.now ?? Date.now;
     this.openFile = deps.openFile ?? openFileWithOs;
     this.stateFile = resolveStateFile(this.dataDir);
+    this.home = deps.home ?? resolveDaemonHome();
+  }
+
+  async migrateStateFileIfNeeded(): Promise<void> {
+    const legacy = legacyStateFile(this.home);
+    if (legacy === this.stateFile) return;
+    let hasLegacy = false;
+    try {
+      hasLegacy = await this.io.exists(legacy);
+    } catch (error: unknown) {
+      this.log(`Checking legacy state file failed: ${String(error)}`);
+    }
+    if (!hasLegacy) return;
+    let hasNew = false;
+    try {
+      hasNew = await this.io.exists(this.stateFile);
+    } catch (error: unknown) {
+      this.log(`Checking state file failed: ${String(error)}`);
+    }
+    if (hasNew) return;
+    try {
+      await this.io.mkdir(path.dirname(this.stateFile));
+      await this.io.rename(legacy, this.stateFile);
+      this.log(`Migrated state file from ${legacy}`);
+    } catch (error: unknown) {
+      this.log(`Migrating legacy state file failed: ${String(error)}`);
+    }
   }
 
   setPaseo(paseo: PaseoApi): void {
@@ -92,7 +123,8 @@ export class BatonController {
     this.setPaseo(paseo);
     if (this.recovered) return Promise.resolve(true);
     if (this.recoveryPromise) return this.recoveryPromise.then(() => this.recovered);
-    this.recoveryPromise = this.doRecover(paseo)
+    this.recoveryPromise = this.migrateStateFileIfNeeded()
+      .then(() => this.doRecover(paseo))
       .then(() => {
         this.recovered = true;
       })
@@ -106,7 +138,7 @@ export class BatonController {
   }
 
   async onTurnEnded(
-    agent: { id: string; workspaceId: string | null; cwd: string },
+    agent: { id: string; workspaceId: string | null; cwd: string; parentAgentId: string | null },
     timeline: readonly AgentTimelineItem[],
     paseo: PaseoApi,
   ): Promise<void> {
@@ -116,6 +148,14 @@ export class BatonController {
     this.lastTimeline.set(agent.id, timeline);
     if (this.pendingHandoff.has(agent.id)) {
       await this.finalizeHandoff(agent.id, paseo);
+      return;
+    }
+    if (this.writerByAgentId.has(agent.id)) {
+      const originalAgentId = this.writerByAgentId.get(agent.id) ?? agent.id;
+      this.writerByAgentId.delete(agent.id);
+      this.writerAgentIds.delete(agent.id);
+      await this.finalizeHandoff(originalAgentId, paseo);
+      await this.archiveAgent(paseo, agent.id);
       return;
     }
     await this.beginIdle(agent, paseo);
@@ -130,15 +170,11 @@ export class BatonController {
   }
 
   onClosed(agent: { id: string }): void {
-    this.dropEntry(agent.id);
-    this.pendingHandoff.delete(agent.id);
-    this.lastTimeline.delete(agent.id);
+    this.cleanupAgent(agent.id);
   }
 
   onArchived(agent: { id: string }): void {
-    this.dropEntry(agent.id);
-    this.pendingHandoff.delete(agent.id);
-    this.lastTimeline.delete(agent.id);
+    this.cleanupAgent(agent.id);
   }
 
   async continue(
@@ -237,7 +273,12 @@ export class BatonController {
     const knownAgentIds = new Set<string>();
     try {
       const { entries } = await paseo.agents.list({});
-      for (const entry of entries) knownAgentIds.add(entry.agent.id);
+      for (const entry of entries) {
+        knownAgentIds.add(entry.agent.id);
+        if (entry.agent.labels?.[BATON_WRITER_LABEL] === "1") {
+          void this.archiveAgent(paseo, entry.agent.id);
+        }
+      }
     } catch (error: unknown) {
       this.log(`Listing agents during recovery failed: ${String(error)}`);
     }
@@ -258,6 +299,7 @@ export class BatonController {
       state: loaded,
       now: this.now(),
       knownAgentIds,
+      ignoredWorkspaceIds: new Set((await this.readSettings()).ignoredWorkspaceIds),
       handoffPath: (agentId) => existingPaths.get(agentId) ?? null,
       retentionMs: DEFAULT_RETENTION_MS,
     });
@@ -294,33 +336,41 @@ export class BatonController {
   }
 
   private async beginIdle(
-    agent: { id: string; workspaceId: string | null; cwd: string },
+    agent: { id: string; workspaceId: string | null; cwd: string; parentAgentId: string | null },
     paseo: PaseoApi,
   ): Promise<void> {
     if (!agent.workspaceId) return;
-    const ttlMs = await this.idleTtlMs();
+    if (agent.parentAgentId) return;
+    if (this.writerAgentIds.has(agent.id)) return;
+    const settings = await this.readSettings();
+    if (settings.ignoredWorkspaceIds.includes(agent.workspaceId)) return;
     const now = this.now();
     const entry = createPendingEntry({
       agentId: agent.id,
       workspaceId: agent.workspaceId,
       cwd: agent.cwd,
       idleSince: now,
-      ttlMs,
-      marginMs: DEFAULT_SAFETY_MARGIN_MS,
+      ttlMs: settings.idleTtlMinutes * 60_000,
+      marginMs: settings.safetyMarginSeconds * 1000,
     });
     this.entries.set(agent.id, entry);
     await this.persistEntries();
     this.setTimer(agent.id, entry.fireAt - now, entry);
   }
 
-  private async idleTtlMs(): Promise<number> {
+  private async readSettings(): Promise<BatonSettings> {
     try {
       const state = await this.settings.read();
-      if (state.status === "ready") return state.values.idleTtlMinutes * 60_000;
+      if (state.status === "ready") return state.values;
     } catch (error: unknown) {
       this.log(`Reading settings failed: ${String(error)}`);
     }
-    return DEFAULT_IDLE_TTL_MS;
+    return {
+      idleTtlMinutes: DEFAULT_IDLE_TTL_MS / 60_000,
+      safetyMarginSeconds: DEFAULT_SAFETY_MARGIN_MS / 1000,
+      handoffProviderModel: "",
+      ignoredWorkspaceIds: [],
+    };
   }
 
   private async fire(entry: BatonEntry, paseo: PaseoApi): Promise<void> {
@@ -342,13 +392,46 @@ export class BatonController {
     }
     try {
       await this.io.mkdir(path.dirname(handoffPath));
-      await paseo.agents.ref(agentId).send(buildHandoffPrompt(handoffPath));
+      const settings = await this.readSettings();
+      if (settings.handoffProviderModel) {
+        await this.spawnHandoffWriter(entry, handoffPath, settings.handoffProviderModel, paseo);
+      } else {
+        await paseo.agents.ref(agentId).send(buildHandoffPrompt(handoffPath));
+      }
     } catch (error: unknown) {
       await this.finalizeHandoff(agentId, paseo);
       this.log(`Handoff prompt for ${agentId} failed, wrote mechanical fallback: ${String(error)}`);
       return;
     }
     this.setFallbackTimer(agentId);
+  }
+
+  private async spawnHandoffWriter(
+    entry: BatonEntry,
+    handoffPath: string,
+    providerModel: string,
+    paseo: PaseoApi,
+  ): Promise<void> {
+    if (!providerModel.includes("/")) {
+      throw new Error(`Invalid handoff writer model "${providerModel}"; expected provider/model format.`);
+    }
+    if (!entry.workspaceId) throw new Error("No workspace for handoff writer.");
+    const draft = renderMechanicalHandoff({
+      agentId: entry.agentId,
+      workspaceId: entry.workspaceId,
+      cwd: entry.cwd ?? path.dirname(path.dirname(handoffPath)),
+      provider: null,
+      timeline: this.lastTimeline.get(entry.agentId) ?? [],
+      now: this.now(),
+    });
+    const writer = await paseo.workspaces.ref(entry.workspaceId).agents.create({
+      config: { provider: providerModel },
+      title: BATON_WRITER_TITLE,
+      labels: { [BATON_WRITER_LABEL]: "1" },
+      prompt: buildWriterHandoffPrompt(handoffPath, draft),
+    });
+    this.writerAgentIds.add(writer.id);
+    this.writerByAgentId.set(writer.id, entry.agentId);
   }
 
   private async finalizeHandoff(agentId: string, paseo: PaseoApi): Promise<void> {
@@ -458,6 +541,22 @@ export class BatonController {
     this.clearTimer(agentId);
     this.clearFallbackTimer(agentId);
     if (this.entries.delete(agentId)) this.persistEntries();
+  }
+
+  private cleanupAgent(agentId: string): void {
+    this.dropEntry(agentId);
+    this.pendingHandoff.delete(agentId);
+    this.lastTimeline.delete(agentId);
+    this.writerAgentIds.delete(agentId);
+    this.writerByAgentId.delete(agentId);
+  }
+
+  private async archiveAgent(paseo: PaseoApi, agentId: string): Promise<void> {
+    try {
+      await paseo.agents.ref(agentId).archive();
+    } catch (error: unknown) {
+      this.log(`Archiving agent ${agentId} failed: ${String(error)}`);
+    }
   }
 
   private markSkippedEntry(agentId: string): void {
