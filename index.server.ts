@@ -1,26 +1,11 @@
-import { defineSettings } from "@getpaseo/plugin";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { BatonController } from "./server/controller";
 import { resolveDaemonHome, resolveDataDir } from "./server/paths";
-import { batonSettingsSchema, continueHandoffRpc, openHandoffRpc, wakeRpc } from "./shared/baton";
+import { batonSettings, continueHandoffRpc, openHandoffRpc, wakeRpc } from "./shared/baton";
 
 export default function contribute(server: PluginServerContext) {
   const dataDir = resolveDataDir(resolveDaemonHome());
-  const settings = server.registerSettings(
-    defineSettings({
-      id: "baton",
-      scope: "host",
-      version: 2,
-      schema: batonSettingsSchema,
-      migrate: (values) => ({
-        idleTtlMinutes: 5,
-        safetyMarginSeconds: 30,
-        handoffProviderModel: "",
-        ignoredWorkspaceIds: [],
-        ...(values && typeof values === "object" ? (values as Record<string, unknown>) : {}),
-      }),
-    }),
-  );
+  const settings = server.registerSettings(batonSettings);
   const controller = new BatonController({
     dataDir,
     settings,

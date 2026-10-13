@@ -1,4 +1,4 @@
-import { defineRpc } from "@getpaseo/plugin";
+import { defineRpc, defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 
 export const BATON_PLUGIN_ID = "baton";
@@ -49,6 +49,20 @@ export const batonSettingsSchema = z.object({
   ignoredWorkspaceIds: z.array(z.string()).default([]),
 });
 export type BatonSettings = z.infer<typeof batonSettingsSchema>;
+
+export const batonSettings = defineSettings({
+  id: "baton",
+  scope: "host",
+  version: 2,
+  schema: batonSettingsSchema,
+  migrate: (values) => ({
+    idleTtlMinutes: 5,
+    safetyMarginSeconds: 30,
+    handoffProviderModel: "",
+    ignoredWorkspaceIds: [],
+    ...(values && typeof values === "object" ? (values as Record<string, unknown>) : {}),
+  }),
+});
 
 export const BATON_WRITER_LABEL = "baton-writer";
 export const BATON_WRITER_TITLE = "[Handoff writer]";
