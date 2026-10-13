@@ -307,10 +307,10 @@ describe("BatonController", () => {
 
   it("migrates a legacy state file into the plugin data directory", async () => {
     const legacyFile = "/home/.paseo/paseo-baton/baton-state.json";
-    const newFile = "/home/.paseo/plugin-data/paseo-baton/baton-state.json";
+    const newFile = "/home/.paseo/plugin-data/baton/baton-state.json";
     const io = memoryIo({ [legacyFile]: JSON.stringify({ "agent-a": doneEntry() }) });
     const controller = new BatonController({
-      dataDir: "/home/.paseo/plugin-data/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings(),
       log: () => {},
       io,

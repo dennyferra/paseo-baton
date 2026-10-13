@@ -21,7 +21,7 @@ import {
   planRecovery,
 } from "./core";
 import { buildHandoffPrompt, buildWriterHandoffPrompt, extractTitleFromDocument } from "./handoff";
-import { handoffPathFor, legacyStateFile, resolveDaemonHome, resolveStateFile } from "./paths";
+import { handoffPathFor, legacyStateFiles, resolveDaemonHome, resolveStateFile } from "./paths";
 import { loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
 
@@ -90,15 +90,6 @@ export class BatonController {
   }
 
   async migrateStateFileIfNeeded(): Promise<void> {
-    const legacy = legacyStateFile(this.home);
-    if (legacy === this.stateFile) return;
-    let hasLegacy = false;
-    try {
-      hasLegacy = await this.io.exists(legacy);
-    } catch (error: unknown) {
-      this.log(`Checking legacy state file failed: ${String(error)}`);
-    }
-    if (!hasLegacy) return;
     let hasNew = false;
     try {
       hasNew = await this.io.exists(this.stateFile);
@@ -106,12 +97,23 @@ export class BatonController {
       this.log(`Checking state file failed: ${String(error)}`);
     }
     if (hasNew) return;
-    try {
-      await this.io.mkdir(path.dirname(this.stateFile));
-      await this.io.rename(legacy, this.stateFile);
-      this.log(`Migrated state file from ${legacy}`);
-    } catch (error: unknown) {
-      this.log(`Migrating legacy state file failed: ${String(error)}`);
+    for (const legacy of legacyStateFiles(this.home)) {
+      if (legacy === this.stateFile) continue;
+      let hasLegacy = false;
+      try {
+        hasLegacy = await this.io.exists(legacy);
+      } catch (error: unknown) {
+        this.log(`Checking legacy state file failed: ${String(error)}`);
+      }
+      if (!hasLegacy) continue;
+      try {
+        await this.io.mkdir(path.dirname(this.stateFile));
+        await this.io.rename(legacy, this.stateFile);
+        this.log(`Migrated state file from ${legacy}`);
+        return;
+      } catch (error: unknown) {
+        this.log(`Migrating legacy state file failed: ${String(error)}`);
+      }
     }
   }
 

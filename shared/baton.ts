@@ -1,7 +1,7 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export const BATON_PLUGIN_ID = "paseo-baton";
+export const BATON_PLUGIN_ID = "baton";
 
 export const BATON_STATUS = z.enum(["pending", "writing", "done", "skipped"]);
 export type BatonStatus = z.infer<typeof BATON_STATUS>;

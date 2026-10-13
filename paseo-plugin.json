@@ -1,5 +1,5 @@
 {
-  "id": "paseo-baton",
+  "id": "baton",
   "name": "Baton",
   "description": "Writes a handoff document when an agent goes idle, then lets you continue the task in a fresh agent.",
   "media": [],
