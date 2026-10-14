@@ -11,8 +11,7 @@ import {
 } from "../server/core";
 
 const NOW = 1_000_000;
-const TTL = 5 * 60 * 1000;
-const MARGIN = 30 * 1000;
+const DELAY = 15 * 60 * 1000;
 
 function pending(overrides: Record<string, unknown> = {}) {
   return {
@@ -21,19 +20,17 @@ function pending(overrides: Record<string, unknown> = {}) {
       workspaceId: "workspace-a",
       cwd: "/work/a",
       idleSince: NOW,
-      ttlMs: TTL,
-      marginMs: MARGIN,
+      delayMs: DELAY,
     }),
     ...overrides,
   };
 }
 
 describe("createPendingEntry", () => {
-  it("places fireAt just before the deadline", () => {
+  it("fires after the idle delay and allows slack before the deadline", () => {
     const entry = pending();
-    expect(entry.deadline).toBe(NOW + TTL);
-    expect(entry.fireAt).toBe(entry.deadline - MARGIN);
-    expect(entry.fireAt).toBeGreaterThan(entry.idleSince);
+    expect(entry.fireAt).toBe(NOW + DELAY);
+    expect(entry.deadline).toBeGreaterThan(entry.fireAt);
     expect(entry.status).toBe("pending");
   });
 
@@ -42,8 +39,7 @@ describe("createPendingEntry", () => {
       agentId: "agent-a",
       workspaceId: "workspace-a",
       idleSince: NOW,
-      ttlMs: 500,
-      marginMs: 1000,
+      delayMs: 500,
     });
     expect(entry.fireAt).toBe(NOW + 1000);
   });

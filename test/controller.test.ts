@@ -40,9 +40,9 @@ function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files:
 
 function settings(
   values: BatonSettings = {
-    idleTtlMinutes: 5,
-    safetyMarginSeconds: 30,
+    idleDelayMinutes: 15,
     handoffProviderModel: "",
+    handoffThinkingOptionId: "",
     ignoredWorkspaceIds: [],
   },
 ) {
@@ -139,7 +139,7 @@ describe("BatonController", () => {
     expect(entry).toBeDefined();
     expect(entry.status).toBe("pending");
     expect(entry.workspaceId).toBe("wks-a");
-    expect(entry.deadline).toBe(NOW + 5 * 60 * 1000);
+    expect(entry.fireAt).toBe(NOW + 15 * 60 * 1000);
     controller.dispose();
   });
 
@@ -229,11 +229,11 @@ describe("BatonController", () => {
     await controller.dispose();
   });
 
-  it("respects the configured safety margin when scheduling", async () => {
+  it("schedules the handoff after the configured idle delay", async () => {
     const io = memoryIo();
     const controller = new BatonController({
       dataDir: "/home/.paseo/paseo-baton",
-      settings: settings({ idleTtlMinutes: 5, safetyMarginSeconds: 60, handoffProviderModel: "", ignoredWorkspaceIds: [] }),
+      settings: settings({ idleDelayMinutes: 20, handoffProviderModel: "", handoffThinkingOptionId: "", ignoredWorkspaceIds: [] }),
       log: () => {},
       io,
       now: () => NOW,
@@ -242,7 +242,7 @@ describe("BatonController", () => {
     await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
     const entry = state["agent-a"];
-    expect(entry.fireAt).toBe(entry.deadline - 60 * 1000);
+    expect(entry.fireAt).toBe(NOW + 20 * 60 * 1000);
     await controller.dispose();
   });
 
@@ -250,7 +250,7 @@ describe("BatonController", () => {
     const io = memoryIo();
     const controller = new BatonController({
       dataDir: "/home/.paseo/paseo-baton",
-      settings: settings({ idleTtlMinutes: 5, safetyMarginSeconds: 30, handoffProviderModel: "", ignoredWorkspaceIds: ["wks-a"] }),
+      settings: settings({ idleDelayMinutes: 15, handoffProviderModel: "", handoffThinkingOptionId: "", ignoredWorkspaceIds: ["wks-a"] }),
       log: () => {},
       io,
       now: () => NOW,
@@ -281,9 +281,9 @@ describe("BatonController", () => {
     const controller = new BatonController({
       dataDir: "/home/.paseo/paseo-baton",
       settings: settings({
-        idleTtlMinutes: 5,
-        safetyMarginSeconds: 30,
+        idleDelayMinutes: 15,
         handoffProviderModel: "claude/claude-sonnet-5-5",
+        handoffThinkingOptionId: "high",
         ignoredWorkspaceIds: [],
       }),
       log: () => {},

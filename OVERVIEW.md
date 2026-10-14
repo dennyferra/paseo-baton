@@ -1,16 +1,16 @@
 # Baton
 
 Baton saves your agent's work state when you walk away. When an agent finishes a turn and stays
-idle, Baton writes a handoff document just before the prompt cache expires, so the next agent can
-pick the task up without re-reading the whole conversation and without paying to rebuild context.
+idle for a while, Baton writes a handoff document so the next agent can pick the task up without
+re-reading the whole conversation.
 
 It helps when you step away from a long coding session and want to continue later in a fresh agent,
 or hand a task to a different model.
 
 ## How it works
 
-When an agent turn ends, Baton starts a timer for a little less than the prompt cache TTL. If no new
-turn starts, it asks the idle agent to write a handoff file to `.paseo/handoffs/<agentId>.md` in its
+When an agent turn ends, Baton starts an idle timer. If no new turn starts before it fires, a
+short-lived writer agent writes a handoff file to `.paseo/handoffs/<agentId>.md` in its
 workspace, using the template Task, Context, Relevant files, Current state, What was tried,
 Decisions, Acceptance criteria, and Constraints. If the agent cannot answer, Baton writes a
 mechanical handoff from the conversation snapshot instead, with no model call.
@@ -27,14 +27,16 @@ in the plugin settings.
 
 ## Settings
 
-The idle delay (`idleTtlMinutes`, default 5) sets how long an agent must sit idle before a handoff
-is written. It should stay just under your provider's prompt cache window. The safety margin
-(`safetyMarginSeconds`, default 30) sets how long before the cache expires the handoff runs, to make
-sure the write reuses the cached context. Handoffs are written by a short-lived dedicated agent
-whose chat is archived after, so the idle agent's own chat only shows the Handoff saved row. Set
-`handoffProviderModel` to choose the writer's model; leave it empty to use the idle agent's own
-model. Workspaces listed in `ignoredWorkspaceIds` never produce handoffs, which is useful for
-throwaway or always-running workspaces.
+Settings live under Settings -> Plugins -> Baton.
+
+- **Idle delay** (`idleDelayMinutes`, default 15, 1-240): how long an agent sits idle before a
+  handoff is written. It does not depend on any provider's prompt cache.
+- **Handoff writer** (`handoffProviderModel`, `handoffThinkingOptionId`): pick the writer's model and
+  effort from the live provider list. The default, "Same as running agent", uses the idle agent's own
+  model and effort. The writer is a short-lived dedicated agent archived after its turn, so the idle
+  agent's chat only shows the Handoff saved row.
+- **Ignored workspaces** (`ignoredWorkspaceIds`): a checklist grouped by project. Checked
+  workspaces never produce handoffs.
 
 ## Capabilities and limits
 

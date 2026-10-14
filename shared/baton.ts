@@ -36,32 +36,35 @@ export const HANDOFF_TEMPLATE_SECTIONS = [
   "Constraints",
 ] as const;
 
-export const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
-export const DEFAULT_SAFETY_MARGIN_MS = 30 * 1000;
+export const DEFAULT_IDLE_DELAY_MINUTES = 15;
+export const HANDOFF_DEADLINE_SLACK_MS = 60 * 60 * 1000;
 export const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const HANDOFF_FALLBACK_TIMEOUT_MS = 3 * 60 * 1000;
 export const MIN_FIRE_DELAY_MS = 1000;
 
 export const batonSettingsSchema = z.object({
-  idleTtlMinutes: z.number().int().min(1).max(1440).default(5),
-  safetyMarginSeconds: z.number().int().min(5).max(3600).default(30),
+  idleDelayMinutes: z.number().int().min(1).max(240).default(DEFAULT_IDLE_DELAY_MINUTES),
   handoffProviderModel: z.string().trim().max(200).default(""),
+  handoffThinkingOptionId: z.string().trim().max(100).default(""),
   ignoredWorkspaceIds: z.array(z.string()).default([]),
 });
 export type BatonSettings = z.infer<typeof batonSettingsSchema>;
 
+export const DEFAULT_SETTINGS: BatonSettings = batonSettingsSchema.parse({});
+
 export const batonSettings = defineSettings({
   id: "baton",
   scope: "host",
-  version: 2,
+  version: 3,
   schema: batonSettingsSchema,
-  migrate: (values) => ({
-    idleTtlMinutes: 5,
-    safetyMarginSeconds: 30,
-    handoffProviderModel: "",
-    ignoredWorkspaceIds: [],
-    ...(values && typeof values === "object" ? (values as Record<string, unknown>) : {}),
-  }),
+  migrate: (values) => {
+    const old = values && typeof values === "object" ? (values as Record<string, unknown>) : {};
+    return {
+      ...DEFAULT_SETTINGS,
+      ...(typeof old.handoffProviderModel === "string" ? { handoffProviderModel: old.handoffProviderModel } : {}),
+      ...(Array.isArray(old.ignoredWorkspaceIds) ? { ignoredWorkspaceIds: old.ignoredWorkspaceIds } : {}),
+    };
+  },
 });
 
 export const BATON_WRITER_LABEL = "baton-writer";

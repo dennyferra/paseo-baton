@@ -1,5 +1,5 @@
 import type { BatonEntry, BatonState } from "../shared/baton";
-import { MIN_FIRE_DELAY_MS } from "../shared/baton";
+import { HANDOFF_DEADLINE_SLACK_MS, MIN_FIRE_DELAY_MS } from "../shared/baton";
 
 export interface BatonClock {
   now(): number;
@@ -10,11 +10,10 @@ export function createPendingEntry(input: {
   workspaceId: string;
   cwd?: string;
   idleSince: number;
-  ttlMs: number;
-  marginMs: number;
+  delayMs: number;
 }): BatonEntry {
-  const deadline = input.idleSince + input.ttlMs;
-  const fireAt = Math.max(input.idleSince + MIN_FIRE_DELAY_MS, deadline - input.marginMs);
+  const fireAt = input.idleSince + Math.max(MIN_FIRE_DELAY_MS, input.delayMs);
+  const deadline = fireAt + HANDOFF_DEADLINE_SLACK_MS;
   return {
     agentId: input.agentId,
     workspaceId: input.workspaceId,

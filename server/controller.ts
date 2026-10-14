@@ -8,8 +8,7 @@ import type { BatonEntry, BatonState, BatonSettings, HandoffInfo } from "../shar
 import { batonSettingsSchema, BATON_WRITER_LABEL, BATON_WRITER_TITLE } from "../shared/baton";
 import {
   DEFAULT_RETENTION_MS,
-  DEFAULT_SAFETY_MARGIN_MS,
-  DEFAULT_IDLE_TTL_MS,
+  DEFAULT_SETTINGS,
   HANDOFF_FALLBACK_TIMEOUT_MS,
 } from "../shared/baton";
 import {
@@ -364,8 +363,7 @@ export class BatonController {
       workspaceId: agent.workspaceId,
       cwd: agent.cwd,
       idleSince: now,
-      ttlMs: settings.idleTtlMinutes * 60_000,
-      marginMs: settings.safetyMarginSeconds * 1000,
+      delayMs: settings.idleDelayMinutes * 60_000,
     });
     this.entries.set(agent.id, entry);
     await this.persistEntries();
@@ -379,12 +377,7 @@ export class BatonController {
     } catch (error: unknown) {
       this.log(`Reading settings failed: ${String(error)}`);
     }
-    return {
-      idleTtlMinutes: DEFAULT_IDLE_TTL_MS / 60_000,
-      safetyMarginSeconds: DEFAULT_SAFETY_MARGIN_MS / 1000,
-      handoffProviderModel: "",
-      ignoredWorkspaceIds: [],
-    };
+    return DEFAULT_SETTINGS;
   }
 
   private async fire(entry: BatonEntry, paseo: PaseoApi): Promise<void> {
@@ -409,10 +402,12 @@ export class BatonController {
     try {
       await this.io.mkdir(path.dirname(handoffPath));
       const settings = await this.readSettings();
-      const model =
-        settings.handoffProviderModel.trim() || (await this.agentProviderModel(paseo, agentId));
-      if (model && model.includes("/")) {
-        await this.spawnHandoffWriter(entry, handoffPath, model, paseo);
+      const configured = settings.handoffProviderModel.trim();
+      const writer = configured
+        ? { providerModel: configured, thinkingOptionId: settings.handoffThinkingOptionId.trim() || null }
+        : await this.agentProviderModel(paseo, agentId);
+      if (writer && writer.providerModel.includes("/")) {
+        await this.spawnHandoffWriter(entry, handoffPath, writer, paseo);
       } else {
         this.log(`fire agent=${agentId} no writer model, using mechanical fallback`);
         const path = await this.writeMechanical(entry, paseo);
@@ -435,11 +430,17 @@ export class BatonController {
     this.setFallbackTimer(agentId);
   }
 
-  private async agentProviderModel(paseo: PaseoApi, agentId: string): Promise<string | null> {
+  private async agentProviderModel(
+    paseo: PaseoApi,
+    agentId: string,
+  ): Promise<{ providerModel: string; thinkingOptionId: string | null } | null> {
     try {
       const snapshot = await paseo.agents.ref(agentId).refresh();
       if (!snapshot) return null;
-      return buildProviderModel(snapshot.agent.provider, snapshot.agent.model);
+      return {
+        providerModel: buildProviderModel(snapshot.agent.provider, snapshot.agent.model),
+        thinkingOptionId: snapshot.agent.thinkingOptionId ?? null,
+      };
     } catch (error: unknown) {
       this.log(`Reading agent model for ${agentId} failed: ${String(error)}`);
       return null;
@@ -449,9 +450,10 @@ export class BatonController {
   private async spawnHandoffWriter(
     entry: BatonEntry,
     handoffPath: string,
-    providerModel: string,
+    writerModel: { providerModel: string; thinkingOptionId: string | null },
     paseo: PaseoApi,
   ): Promise<void> {
+    const { providerModel, thinkingOptionId } = writerModel;
     if (!providerModel.includes("/")) {
       throw new Error(`Invalid handoff writer model "${providerModel}"; expected provider/model format.`);
     }
@@ -465,7 +467,7 @@ export class BatonController {
       now: this.now(),
     });
     const writer = await paseo.workspaces.ref(entry.workspaceId).agents.create({
-      config: { provider: providerModel },
+      config: thinkingOptionId ? { provider: providerModel, thinkingOptionId } : { provider: providerModel },
       title: BATON_WRITER_TITLE,
       labels: { [BATON_WRITER_LABEL]: "1" },
       prompt: buildWriterHandoffPrompt(handoffPath, draft),

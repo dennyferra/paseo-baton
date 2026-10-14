@@ -1,31 +1,82 @@
-import { useSettings, type PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { useSettings, usePaseo, type PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { SettingsInput, SettingsSection, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import type { BatonSettings } from "../shared/baton";
-import { batonSettings } from "../shared/baton";
+import { batonSettings, DEFAULT_SETTINGS } from "../shared/baton";
 
-const DEFAULTS: BatonSettings = {
-  idleTtlMinutes: 5,
-  safetyMarginSeconds: 30,
-  handoffProviderModel: "",
-  ignoredWorkspaceIds: [],
-};
-
-function parseIntOr(value: string, fallback: number): number {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
+interface ModelChoice {
+  value: string;
+  label: string;
+  effortOptions: Array<{ label: string; value: string }>;
 }
 
-function parseWorkspaceIds(text: string): string[] {
-  return text
-    .split(/[\n,]/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+interface WorkspaceChoice {
+  id: string;
+  name: string;
+  project: string;
+}
+
+const SAME_AS_RUNNING = "";
+
+function clampDelay(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(240, Math.max(1, parsed));
 }
 
 export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
   const settings = useSettings(batonSettings);
+  const paseo = usePaseo();
   const [draft, setDraft] = useState<BatonSettings | null>(null);
+  const [models, setModels] = useState<ModelChoice[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceChoice[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (draft !== null) return;
+    if (settings.status === "ready") setDraft(settings.values);
+    else if (settings.status === "error" || settings.status === "invalid") setDraft(DEFAULT_SETTINGS);
+  }, [draft, settings.status]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [snapshot, listed] = await Promise.all([paseo.providers.snapshot(), paseo.workspaces.list()]);
+        if (cancelled) return;
+        const choices: ModelChoice[] = [];
+        for (const entry of snapshot.entries) {
+          if (!entry.enabled || entry.status !== "ready") continue;
+          for (const model of entry.models ?? []) {
+            if (model.isSelectable === false) continue;
+            choices.push({
+              value: `${entry.provider}/${model.id}`,
+              label: `${entry.label ?? entry.provider} / ${model.label}`,
+              effortOptions: (model.thinkingOptions ?? []).map((option) => ({
+                label: option.label,
+                value: option.id,
+              })),
+            });
+          }
+        }
+        setModels(choices);
+        setWorkspaces(
+          listed.entries.map((workspace) => ({
+            id: workspace.id,
+            name: workspace.name,
+            project: workspace.projectDisplayName,
+          })),
+        );
+      } catch (error: unknown) {
+        if (!cancelled) setLoadError(String(error));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [paseo]);
+
   const styles = useMemo(
     () => ({
       screen: {
@@ -33,33 +84,9 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         padding: layout.compact ? 16 : 24,
         backgroundColor: theme.colors.surface0,
       },
-      field: {
-        gap: 6,
-        marginBottom: layout.compact ? 12 : 16,
-      },
-      label: {
-        color: theme.colors.foreground,
-        fontSize: layout.compact ? 13 : 14,
-        fontWeight: "600" as const,
-      },
       hint: {
         color: theme.colors.foregroundMuted,
         fontSize: layout.compact ? 12 : 13,
-      },
-      input: {
-        color: theme.colors.foreground,
-        fontSize: layout.compact ? 13 : 14,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        paddingVertical: layout.compact ? 8 : 10,
-        backgroundColor: theme.colors.surface1,
-        minHeight: 44,
-      },
-      multiline: {
-        minHeight: 80,
-        textAlignVertical: "top" as const,
       },
       save: {
         marginTop: layout.compact ? 8 : 12,
@@ -82,11 +109,13 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     [theme, layout.compact, settings.saving],
   );
 
-  useEffect(() => {
-    if (draft !== null) return;
-    if (settings.status === "ready") setDraft(settings.values);
-    else if (settings.status === "error" || settings.status === "invalid") setDraft(DEFAULTS);
-  }, [draft, settings.status]);
+  const projects = useMemo(() => {
+    const grouped = new Map<string, WorkspaceChoice[]>();
+    for (const workspace of workspaces) {
+      grouped.set(workspace.project, [...(grouped.get(workspace.project) ?? []), workspace]);
+    }
+    return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [workspaces]);
 
   if (!draft) {
     return (
@@ -100,6 +129,22 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     setDraft((current) => (current ? { ...current, ...patch } : current));
   };
 
+  const modelOptions = [
+    { label: "Same as running agent", value: SAME_AS_RUNNING },
+    ...models.map(({ value, label }) => ({ label, value })),
+  ];
+  // Keep a previously saved model selectable even if its provider is currently unavailable.
+  if (draft.handoffProviderModel && !models.some((model) => model.value === draft.handoffProviderModel)) {
+    modelOptions.push({ label: draft.handoffProviderModel, value: draft.handoffProviderModel });
+  }
+  const selectedModel = models.find((model) => model.value === draft.handoffProviderModel);
+  const effortOptions = [{ label: "Model default", value: "" }, ...(selectedModel?.effortOptions ?? [])];
+
+  const toggleWorkspace = (id: string, ignored: boolean) => {
+    const rest = draft.ignoredWorkspaceIds.filter((existing) => existing !== id);
+    update({ ignoredWorkspaceIds: ignored ? [...rest, id] : rest });
+  };
+
   const onSave = async () => {
     if (settings.status !== "ready") return;
     const ok = await settings.save(draft, settings.revision);
@@ -108,56 +153,49 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 24 }}>
-      <View style={styles.field}>
-        <Text style={styles.label}>Idle delay (minutes)</Text>
-        <Text style={styles.hint}>How long an agent sits idle before a handoff is written.</Text>
-        <TextInput
-          style={styles.input}
-          value={String(draft.idleTtlMinutes)}
-          keyboardType="number-pad"
-          accessibilityLabel="Idle delay in minutes"
-          onChangeText={(value) => update({ idleTtlMinutes: parseIntOr(value, draft.idleTtlMinutes) })}
+      <SettingsSection title="When to write a handoff">
+        <SettingsInput
+          label="Idle delay (minutes)"
+          hint="Write a handoff once an agent has been idle this long (1-240)."
+          initialValue={String(draft.idleDelayMinutes)}
+          onChangeText={(value) => update({ idleDelayMinutes: clampDelay(value, draft.idleDelayMinutes) })}
         />
-      </View>
-      <View style={styles.field}>
-        <Text style={styles.label}>Safety margin (seconds)</Text>
-        <Text style={styles.hint}>How long before the cache expires the handoff runs.</Text>
-        <TextInput
-          style={styles.input}
-          value={String(draft.safetyMarginSeconds)}
-          keyboardType="number-pad"
-          accessibilityLabel="Safety margin in seconds"
-          onChangeText={(value) => update({ safetyMarginSeconds: parseIntOr(value, draft.safetyMarginSeconds) })}
-        />
-      </View>
-      <View style={styles.field}>
-        <Text style={styles.label}>Handoff writer model</Text>
-        <Text style={styles.hint}>
-          Leave empty to write handoffs with a dedicated agent using the idle agent's own model.
-        </Text>
-        <TextInput
-          style={styles.input}
+      </SettingsSection>
+      <SettingsSection title="Handoff writer">
+        <SettingsSelect
+          label="Model"
+          hint="The agent that writes the handoff. Defaults to the idle agent's own model and effort."
           value={draft.handoffProviderModel}
-          autoCapitalize="none"
-          autoCorrect={false}
-          accessibilityLabel="Handoff writer model"
-          placeholder="claude/claude-sonnet-5-5"
-          placeholderTextColor={theme.colors.foregroundMuted}
-          onChangeText={(value) => update({ handoffProviderModel: value })}
+          options={modelOptions}
+          onValueChange={(value) => update({ handoffProviderModel: value, handoffThinkingOptionId: "" })}
         />
-      </View>
-      <View style={styles.field}>
-        <Text style={styles.label}>Ignored workspace ids</Text>
-        <Text style={styles.hint}>One workspace id per line; agents there never produce handoffs.</Text>
-        <TextInput
-          style={[styles.input, styles.multiline]}
-          value={draft.ignoredWorkspaceIds.join("\n")}
-          multiline
-          accessibilityLabel="Ignored workspace ids"
-          placeholderTextColor={theme.colors.foregroundMuted}
-          onChangeText={(value) => update({ ignoredWorkspaceIds: parseWorkspaceIds(value) })}
-        />
-      </View>
+        {selectedModel && selectedModel.effortOptions.length > 0 ? (
+          <SettingsSelect
+            label="Effort"
+            value={draft.handoffThinkingOptionId}
+            options={effortOptions}
+            onValueChange={(value) => update({ handoffThinkingOptionId: value })}
+          />
+        ) : null}
+      </SettingsSection>
+      {projects.length > 0 ? (
+        <Text style={[styles.hint, { marginBottom: 8 }]}>
+          Ignored workspaces: agents in checked workspaces never produce handoffs.
+        </Text>
+      ) : null}
+      {projects.map(([project, items]) => (
+        <SettingsSection key={project} title={project}>
+          {items.map((workspace) => (
+            <SettingsSwitch
+              key={workspace.id}
+              label={workspace.name}
+              value={draft.ignoredWorkspaceIds.includes(workspace.id)}
+              onValueChange={(value) => toggleWorkspace(workspace.id, value)}
+            />
+          ))}
+        </SettingsSection>
+      ))}
+      {loadError ? <Text style={styles.error}>Could not load providers or workspaces: {loadError}</Text> : null}
       {settings.status === "invalid" ? <Text style={styles.error}>{settings.error}</Text> : null}
       {settings.saveError ? <Text style={styles.error}>{settings.saveError}</Text> : null}
       <Pressable
