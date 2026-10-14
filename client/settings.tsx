@@ -1,5 +1,6 @@
 import { useSettings, usePaseo, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { SettingsInput, SettingsSection, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
+import type { PaseoApi } from "@getpaseo/client";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { BatonSettings } from "../shared/baton";
@@ -17,6 +18,24 @@ interface WorkspaceChoice {
 }
 
 const SAME_AS_RUNNING = "";
+
+type ProviderSnapshot = Awaited<ReturnType<PaseoApi["providers"]["snapshot"]>>;
+type DaemonProfile = NonNullable<Awaited<ReturnType<PaseoApi["config"]["get"]>>["config"]["agentProfiles"]>[number];
+
+// "Planner: Claude · Sonnet 5.5 · Plan mode · Low", falling back to raw ids for unknown providers.
+function describeProfile(profile: DaemonProfile, snapshot: ProviderSnapshot | null): string {
+  const entry = snapshot?.entries.find((candidate) => candidate.provider === profile.provider);
+  const model = entry?.models?.find((candidate) => candidate.id === profile.model);
+  const mode = entry?.modes?.find((candidate) => candidate.id === profile.modeId);
+  const effort = model?.thinkingOptions?.find((candidate) => candidate.id === profile.thinkingOptionId);
+  const parts = [
+    entry?.label ?? profile.provider,
+    profile.model ? (model?.label ?? profile.model) : null,
+    profile.modeId ? `${mode?.label ?? profile.modeId} mode` : null,
+    profile.thinkingOptionId ? (effort?.label ?? profile.thinkingOptionId) : null,
+  ].filter((part): part is string => Boolean(part));
+  return `${profile.name}: ${parts.join(" · ")}`;
+}
 
 function clampDelay(value: string, fallback: number): number {
   const parsed = Number.parseInt(value, 10);
@@ -42,12 +61,16 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const [daemon, listed] = await Promise.all([paseo.config.get(), paseo.workspaces.list()]);
+        const [daemon, listed, snapshot] = await Promise.all([
+          paseo.config.get(),
+          paseo.workspaces.list(),
+          paseo.providers.snapshot().catch(() => null),
+        ]);
         if (cancelled) return;
         setProfiles(
           (daemon.config.agentProfiles ?? []).map((profile) => ({
             value: profile.id,
-            label: profile.name,
+            label: describeProfile(profile, snapshot),
           })),
         );
         setWorkspaces(
