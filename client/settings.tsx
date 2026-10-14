@@ -8,7 +8,8 @@ import { batonSettings, DEFAULT_SETTINGS } from "../shared/baton";
 
 interface ProfileChoice {
   value: string;
-  label: string;
+  name: string;
+  detail: string;
 }
 
 interface WorkspaceChoice {
@@ -22,7 +23,7 @@ const SAME_AS_RUNNING = "";
 type ProviderSnapshot = Awaited<ReturnType<PaseoApi["providers"]["snapshot"]>>;
 type DaemonProfile = NonNullable<Awaited<ReturnType<PaseoApi["config"]["get"]>>["config"]["agentProfiles"]>[number];
 
-// "Planner: Claude · Sonnet 5.5 · Plan mode · Low", falling back to raw ids for unknown providers.
+// Detail line like "Claude · Sonnet 5.5 · Plan mode · Low", falling back to raw ids for unknown providers.
 function describeProfile(profile: DaemonProfile, snapshot: ProviderSnapshot | null): string {
   const entry = snapshot?.entries.find((candidate) => candidate.provider === profile.provider);
   const model = entry?.models?.find((candidate) => candidate.id === profile.model);
@@ -34,7 +35,7 @@ function describeProfile(profile: DaemonProfile, snapshot: ProviderSnapshot | nu
     profile.modeId ? `${mode?.label ?? profile.modeId} mode` : null,
     profile.thinkingOptionId ? (effort?.label ?? profile.thinkingOptionId) : null,
   ].filter((part): part is string => Boolean(part));
-  return `${profile.name}: ${parts.join(" · ")}`;
+  return parts.join(" · ");
 }
 
 function clampDelay(value: string, fallback: number): number {
@@ -70,7 +71,8 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         setProfiles(
           (daemon.config.agentProfiles ?? []).map((profile) => ({
             value: profile.id,
-            label: describeProfile(profile, snapshot),
+            name: profile.name,
+            detail: describeProfile(profile, snapshot),
           })),
         );
         setWorkspaces(
@@ -99,6 +101,23 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       hint: {
         color: theme.colors.foregroundMuted,
         fontSize: layout.compact ? 12 : 13,
+      },
+      profileRow: {
+        padding: 10,
+        marginBottom: 6,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.surface1,
+        gap: 2,
+      },
+      profileRowSelected: {
+        borderColor: theme.colors.accent,
+      },
+      profileName: {
+        color: theme.colors.foreground,
+        fontSize: layout.compact ? 13 : 14,
+        fontWeight: "600" as const,
       },
       save: {
         marginTop: layout.compact ? 8 : 12,
@@ -141,10 +160,13 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     setDraft((current) => (current ? { ...current, ...patch } : current));
   };
 
-  const profileOptions = [{ label: "Same as running agent", value: SAME_AS_RUNNING }, ...profiles];
-  // Keep a saved profile selectable while the list loads or if the profile was deleted.
+  const profileOptions: ProfileChoice[] = [
+    { value: SAME_AS_RUNNING, name: "Same as running agent", detail: "The idle agent's own provider, model and effort" },
+    ...profiles,
+  ];
+  // Keep a saved profile visible while the list loads or if the profile was deleted.
   if (draft.handoffProfileId && !profiles.some((profile) => profile.value === draft.handoffProfileId)) {
-    profileOptions.push({ label: "Unknown profile", value: draft.handoffProfileId });
+    profileOptions.push({ value: draft.handoffProfileId, name: "Unknown profile", detail: draft.handoffProfileId });
   }
 
   const toggleWorkspace = (id: string, ignored: boolean) => {
@@ -169,13 +191,25 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         />
       </SettingsSection>
       <SettingsSection title="Handoff writer">
-        <SettingsSelect
-          label="Agent profile"
-          hint="Provider, model and effort come from the profile (its mode is ignored). Defaults to the idle agent's own."
-          value={draft.handoffProfileId}
-          options={profileOptions}
-          onValueChange={(value) => update({ handoffProfileId: value })}
-        />
+        <Text style={[styles.hint, { marginBottom: 8 }]}>
+          Provider, model and effort come from the profile; its mode is ignored so the writer can save the file.
+        </Text>
+        {profileOptions.map((option) => {
+          const selected = draft.handoffProfileId === option.value;
+          return (
+            <Pressable
+              key={option.value || "same"}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+              accessibilityLabel={`${option.name}: ${option.detail}`}
+              onPress={() => update({ handoffProfileId: option.value })}
+              style={[styles.profileRow, selected ? styles.profileRowSelected : null]}
+            >
+              <Text style={styles.profileName}>{selected ? `\u2713 ${option.name}` : option.name}</Text>
+              <Text style={styles.hint}>{option.detail}</Text>
+            </Pressable>
+          );
+        })}
       </SettingsSection>
       {projects.length > 0 ? (
         <Text style={[styles.hint, { marginBottom: 8 }]}>
