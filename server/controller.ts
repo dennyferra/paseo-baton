@@ -2,7 +2,7 @@ import type { PaseoApi, PaseoAgent } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { PluginSettings } from "@getpaseo/plugin/server";
 import { execFile } from "node:child_process";
-import path from "node:path";
+import path, { dirname } from "node:path";
 import { promisify } from "node:util";
 import type { BatonEntry, BatonState, BatonSettings, HandoffInfo } from "../shared/baton";
 import { batonSettingsSchema, BATON_WRITER_LABEL, BATON_WRITER_TITLE } from "../shared/baton";
@@ -19,7 +19,7 @@ import {
   markWriting,
   planRecovery,
 } from "./core";
-import { buildWriterHandoffPrompt, extractTitleFromDocument } from "./handoff";
+import { buildWriterHandoffPrompt, extractHandoffDocument, extractTitleFromDocument } from "./handoff";
 import { handoffPathFor, legacyStateFiles, resolveDaemonHome, resolveStateFile } from "./paths";
 import { loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
@@ -155,7 +155,7 @@ export class BatonController {
       const originalAgentId = this.writerByAgentId.get(agent.id) ?? agent.id;
       this.writerByAgentId.delete(agent.id);
       this.writerAgentIds.delete(agent.id);
-      await this.finalizeHandoff(originalAgentId, paseo);
+      await this.finalizeHandoff(originalAgentId, paseo, extractHandoffDocument(timeline));
       await this.archiveAgent(paseo, agent.id);
       return;
     }
@@ -504,13 +504,13 @@ export class BatonController {
       config: thinkingOptionId ? { provider: providerModel, thinkingOptionId } : { provider: providerModel },
       title: BATON_WRITER_TITLE,
       labels: { [BATON_WRITER_LABEL]: "1" },
-      prompt: buildWriterHandoffPrompt(handoffPath, draft),
+      prompt: buildWriterHandoffPrompt(draft),
     });
     this.writerAgentIds.add(writer.id);
     this.writerByAgentId.set(writer.id, entry.agentId);
   }
 
-  private async finalizeHandoff(agentId: string, paseo: PaseoApi): Promise<void> {
+  private async finalizeHandoff(agentId: string, paseo: PaseoApi, document: string | null = null): Promise<void> {
     this.clearFallbackTimer(agentId);
     this.pendingHandoff.delete(agentId);
     const entry = this.entries.get(agentId);
@@ -526,6 +526,15 @@ export class BatonController {
       exists = await this.io.exists(handoffPath);
     } catch (error: unknown) {
       this.log(`Checking handoff file for ${agentId} failed: ${String(error)}`);
+    }
+    if (!exists && document) {
+      try {
+        await this.io.mkdir(dirname(handoffPath));
+        await this.io.writeFile(handoffPath, document);
+        exists = true;
+      } catch (error: unknown) {
+        this.log(`Writing handoff document for ${agentId} failed: ${String(error)}`);
+      }
     }
     if (!exists) {
       path = await this.writeMechanical(entry, paseo);

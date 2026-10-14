@@ -1,8 +1,8 @@
-export function buildWriterHandoffPrompt(absPath: string, draft: string): string {
+export function buildWriterHandoffPrompt(draft: string): string {
   return [
-    `Write a handoff document to ${absPath} so a fresh agent can continue the task described below without asking the original agent anything.`,
+    "Write a handoff document so a fresh agent can continue the task described below without asking the original agent anything.",
     "",
-    "Create the file if it does not exist. Use exactly these markdown headings:",
+    "Reply with only the markdown document, no preamble and no code fence. Do not use any tools, read or modify any files, or start new work. Use exactly these headings:",
     "",
     "# Task",
     "# Context",
@@ -13,14 +13,25 @@ export function buildWriterHandoffPrompt(absPath: string, draft: string): string
     "# Acceptance criteria",
     "# Constraints",
     "",
-    "Fill every section from the machine draft below, correcting and expanding it with real detail. Be concrete: name the files changed, what works, what is broken, and the single next step. Do not modify any other files and do not start new work.",
-    "",
-    "When the file is written, reply with only the absolute path.",
+    "Fill every section from the machine draft below, correcting and expanding it with real detail. Be concrete: name the files changed, what works, what is broken, and the single next step.",
     "",
     "## Machine draft",
     "",
     draft,
   ].join("\n");
+}
+
+/** Returns the writer's reply as a handoff document, or null if it does not look like one. */
+export function extractHandoffDocument(timeline: ReadonlyArray<{ type: string; text?: string }>): string | null {
+  const text = timeline
+    .filter((item) => item.type === "assistant_message" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("")
+    .trim()
+    .replace(/^```(?:markdown|md)?\s*\n/i, "")
+    .replace(/\n```\s*$/, "")
+    .trim();
+  return /^#\s*Task\s*$/im.test(text) ? `${text}\n` : null;
 }
 
 export function extractTitleFromDocument(text: string, fallback: string): string {

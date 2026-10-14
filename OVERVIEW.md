@@ -10,7 +10,7 @@ or hand a task to a different model.
 ## How it works
 
 When an agent turn ends, Baton starts an idle timer. If no new turn starts before it fires, a
-short-lived writer agent writes a handoff file to `.paseo/handoffs/<agentId>.md` in its
+short-lived writer agent drafts the handoff, and Baton saves it to `.paseo/handoffs/<agentId>.md` in its
 workspace, using the template Task, Context, Relevant files, Current state, What was tried,
 Decisions, Acceptance criteria, and Constraints. If the agent cannot answer, Baton writes a
 mechanical handoff from the conversation snapshot instead, with no model call.
@@ -32,7 +32,7 @@ Settings live under Settings -> Plugins -> Baton.
 - **Idle delay** (`idleDelayMinutes`, default 15, 1-240): how long an agent sits idle before a
   handoff is written. It does not depend on any provider's prompt cache.
 - **Handoff writer** (`handoffProfileId`): pick one of your Paseo agent profiles. Its provider,
-  model and effort are used; its mode is ignored so the writer can save the file. The default,
+  model and effort are used; its mode is ignored. The writer never needs file access: it replies with the document and Baton writes the file. The default,
   "Same as running agent", uses the idle agent's own model and effort. The writer is a short-lived
   dedicated agent archived after its turn, so the idle agent's chat only shows the Handoff saved row.
 - **Ignored projects and workspaces** (`ignoredProjectIds`, `ignoredWorkspaceIds`): switches grouped by

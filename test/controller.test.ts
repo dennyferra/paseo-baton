@@ -319,9 +319,10 @@ describe("BatonController", () => {
     await controller.ensureRecovered(paseo as never);
     await controller.onTurnEnded(
       { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
-      [{ type: "assistant_message", text: "written" }],
+      [{ type: "assistant_message", text: "# Task\nShip it\n\n# Context\nDone so far" }],
       paseo as never,
     );
+    expect(io.files.get(HANDOFF_PATH)).toContain("# Task\nShip it");
     expect(calls).toContain("create:wks-a");
     expect(created[0].config).toEqual({ provider: "claude/claude-haiku-5-5", thinkingOptionId: "low" });
     expect(archived).toContain("writer-1");

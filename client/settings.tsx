@@ -217,7 +217,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       <Text style={styles.sectionTitle}>Handoff writer</Text>
       <SettingsCard>
         <Text style={[styles.hint, { marginBottom: 8 }]}>
-          Provider, model and effort come from the profile; its mode is ignored so the writer can save the file.
+          Provider, model and effort come from the profile; its mode is ignored.
         </Text>
         {profileOptions.map((option) => {
           const selected = draft.handoffProfileId === option.value;
