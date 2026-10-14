@@ -133,8 +133,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       <View style={styles.field}>
         <Text style={styles.label}>Handoff writer model</Text>
         <Text style={styles.hint}>
-          Leave empty to have the idle agent write its own handoff, or set a provider/model for a
-          dedicated writer.
+          Leave empty to write handoffs with a dedicated agent using the idle agent's own model.
         </Text>
         <TextInput
           style={styles.input}

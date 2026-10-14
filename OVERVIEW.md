@@ -30,11 +30,11 @@ in the plugin settings.
 The idle delay (`idleTtlMinutes`, default 5) sets how long an agent must sit idle before a handoff
 is written. It should stay just under your provider's prompt cache window. The safety margin
 (`safetyMarginSeconds`, default 30) sets how long before the cache expires the handoff runs, to make
-sure the write reuses the cached context. A handoff provider model (`handoffProviderModel`, optional)
-can be set to have a short-lived agent with that model write the handoff instead of the idle agent;
-leave it empty to keep the idle agent writing its own handoff. Workspaces listed in
-`ignoredWorkspaceIds` never produce handoffs, which is useful for throwaway or always-running
-workspaces.
+sure the write reuses the cached context. Handoffs are written by a short-lived dedicated agent
+whose chat is archived after, so the idle agent's own chat only shows the Handoff saved row. Set
+`handoffProviderModel` to choose the writer's model; leave it empty to use the idle agent's own
+model. Workspaces listed in `ignoredWorkspaceIds` never produce handoffs, which is useful for
+throwaway or always-running workspaces.
 
 ## Capabilities and limits
 

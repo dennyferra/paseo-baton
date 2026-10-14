@@ -20,7 +20,7 @@ import {
   markWriting,
   planRecovery,
 } from "./core";
-import { buildHandoffPrompt, buildWriterHandoffPrompt, extractTitleFromDocument } from "./handoff";
+import { buildWriterHandoffPrompt, extractTitleFromDocument } from "./handoff";
 import { handoffPathFor, legacyStateFiles, resolveDaemonHome, resolveStateFile } from "./paths";
 import { loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
@@ -167,8 +167,12 @@ export class BatonController {
     const agentId = agent.id;
     this.clearTimer(agentId);
     this.clearFallbackTimer(agentId);
-    if (this.pendingHandoff.has(agentId)) return;
-    if (this.entries.delete(agentId)) this.persistEntries();
+    if (this.pendingHandoff.has(agentId)) {
+      return;
+    }
+    if (this.entries.delete(agentId)) {
+      this.persistEntries();
+    }
   }
 
   onClosed(agent: { id: string }): void {
@@ -341,11 +345,19 @@ export class BatonController {
     agent: { id: string; workspaceId: string | null; cwd: string; parentAgentId: string | null },
     paseo: PaseoApi,
   ): Promise<void> {
-    if (!agent.workspaceId) return;
-    if (agent.parentAgentId) return;
-    if (this.writerAgentIds.has(agent.id)) return;
+    if (!agent.workspaceId) {
+      return;
+    }
+    if (agent.parentAgentId) {
+      return;
+    }
+    if (this.writerAgentIds.has(agent.id)) {
+      return;
+    }
     const settings = await this.readSettings();
-    if (settings.ignoredWorkspaceIds.includes(agent.workspaceId)) return;
+    if (settings.ignoredWorkspaceIds.includes(agent.workspaceId)) {
+      return;
+    }
     const now = this.now();
     const entry = createPendingEntry({
       agentId: agent.id,
@@ -379,6 +391,7 @@ export class BatonController {
     const { agentId } = entry;
     if (this.disposed) return;
     const status = await this.agentStatus(paseo, agentId);
+    this.log(`fire agent=${agentId} status=${status}`);
     if (status !== "idle") {
       this.dropEntry(agentId);
       return;
@@ -386,6 +399,7 @@ export class BatonController {
     this.entries.set(agentId, markWriting(entry, this.now()));
     this.persistEntries();
     this.pendingHandoff.add(agentId);
+    this.log(`fire agent=${agentId} handoff started`);
     const handoffPath = await this.pathForEntry(entry, paseo);
     if (!handoffPath) {
       this.pendingHandoff.delete(agentId);
@@ -395,10 +409,23 @@ export class BatonController {
     try {
       await this.io.mkdir(path.dirname(handoffPath));
       const settings = await this.readSettings();
-      if (settings.handoffProviderModel) {
-        await this.spawnHandoffWriter(entry, handoffPath, settings.handoffProviderModel, paseo);
+      const model =
+        settings.handoffProviderModel.trim() || (await this.agentProviderModel(paseo, agentId));
+      if (model && model.includes("/")) {
+        await this.spawnHandoffWriter(entry, handoffPath, model, paseo);
       } else {
-        await paseo.agents.ref(agentId).send(buildHandoffPrompt(handoffPath));
+        this.log(`fire agent=${agentId} no writer model, using mechanical fallback`);
+        const path = await this.writeMechanical(entry, paseo);
+        const done = markDone(entry, path, this.now());
+        this.entries.set(agentId, done);
+        this.persistEntries();
+        this.pendingHandoff.delete(agentId);
+        await this.appendRow(paseo, agentId, {
+          agentId,
+          path,
+          continuedAgentId: done.continuedAgentId,
+        });
+        return;
       }
     } catch (error: unknown) {
       await this.finalizeHandoff(agentId, paseo);
@@ -406,6 +433,17 @@ export class BatonController {
       return;
     }
     this.setFallbackTimer(agentId);
+  }
+
+  private async agentProviderModel(paseo: PaseoApi, agentId: string): Promise<string | null> {
+    try {
+      const snapshot = await paseo.agents.ref(agentId).refresh();
+      if (!snapshot) return null;
+      return buildProviderModel(snapshot.agent.provider, snapshot.agent.model);
+    } catch (error: unknown) {
+      this.log(`Reading agent model for ${agentId} failed: ${String(error)}`);
+      return null;
+    }
   }
 
   private async spawnHandoffWriter(
