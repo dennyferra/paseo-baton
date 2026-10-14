@@ -1,5 +1,5 @@
 import { useSettings, usePaseo, type PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { SettingsInput, SettingsSection, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
+import { SettingsInput, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import type { PaseoApi } from "@getpaseo/client";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
