@@ -9,6 +9,7 @@ export type BatonStatus = z.infer<typeof BATON_STATUS>;
 export const batonEntrySchema = z.object({
   agentId: z.string(),
   workspaceId: z.string(),
+  projectId: z.string().optional(),
   cwd: z.string().optional(),
   idleSince: z.number(),
   fireAt: z.number(),
@@ -46,6 +47,7 @@ export const batonSettingsSchema = z.object({
   idleDelayMinutes: z.number().int().min(1).max(240).default(DEFAULT_IDLE_DELAY_MINUTES),
   handoffProfileId: z.string().trim().max(200).default(""),
   ignoredWorkspaceIds: z.array(z.string()).default([]),
+  ignoredProjectIds: z.array(z.string()).default([]),
 });
 export type BatonSettings = z.infer<typeof batonSettingsSchema>;
 
@@ -54,13 +56,14 @@ export const DEFAULT_SETTINGS: BatonSettings = batonSettingsSchema.parse({});
 export const batonSettings = defineSettings({
   id: "baton",
   scope: "host",
-  version: 4,
+  version: 5,
   schema: batonSettingsSchema,
   migrate: (values) => {
     const old = values && typeof values === "object" ? (values as Record<string, unknown>) : {};
     return {
       ...DEFAULT_SETTINGS,
       ...(typeof old.idleDelayMinutes === "number" ? { idleDelayMinutes: old.idleDelayMinutes } : {}),
+      ...(typeof old.handoffProfileId === "string" ? { handoffProfileId: old.handoffProfileId } : {}),
       ...(Array.isArray(old.ignoredWorkspaceIds) ? { ignoredWorkspaceIds: old.ignoredWorkspaceIds } : {}),
     };
   },

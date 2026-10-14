@@ -300,11 +300,13 @@ export class BatonController {
       }
     }
 
+    const recoverySettings = await this.readSettings();
     const planned = planRecovery({
       state: loaded,
       now: this.now(),
       knownAgentIds,
-      ignoredWorkspaceIds: new Set((await this.readSettings()).ignoredWorkspaceIds),
+      ignoredWorkspaceIds: new Set(recoverySettings.ignoredWorkspaceIds),
+      ignoredProjectIds: new Set(recoverySettings.ignoredProjectIds),
       handoffPath: (agentId) => existingPaths.get(agentId) ?? null,
       retentionMs: DEFAULT_RETENTION_MS,
     });
@@ -357,10 +359,13 @@ export class BatonController {
     if (settings.ignoredWorkspaceIds.includes(agent.workspaceId)) {
       return;
     }
+    const projectId = await this.workspaceProjectId(paseo, agent.workspaceId);
+    if (projectId && settings.ignoredProjectIds.includes(projectId)) return;
     const now = this.now();
     const entry = createPendingEntry({
       agentId: agent.id,
       workspaceId: agent.workspaceId,
+      projectId: projectId ?? undefined,
       cwd: agent.cwd,
       idleSince: now,
       delayMs: settings.idleDelayMinutes * 60_000,
@@ -368,6 +373,16 @@ export class BatonController {
     this.entries.set(agent.id, entry);
     await this.persistEntries();
     this.setTimer(agent.id, entry.fireAt - now, entry);
+  }
+
+  private async workspaceProjectId(paseo: PaseoApi, workspaceId: string): Promise<string | null> {
+    try {
+      const workspace = await paseo.workspaces.ref(workspaceId).refresh();
+      return workspace?.projectId ?? null;
+    } catch (error: unknown) {
+      this.log(`Reading project for workspace ${workspaceId} failed: ${String(error)}`);
+      return null;
+    }
   }
 
   private async readSettings(): Promise<BatonSettings> {

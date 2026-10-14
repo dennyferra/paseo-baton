@@ -35,8 +35,9 @@ Settings live under Settings -> Plugins -> Baton.
   model and effort are used; its mode is ignored so the writer can save the file. The default,
   "Same as running agent", uses the idle agent's own model and effort. The writer is a short-lived
   dedicated agent archived after its turn, so the idle agent's chat only shows the Handoff saved row.
-- **Ignored workspaces** (`ignoredWorkspaceIds`): a checklist grouped by project. Checked
-  workspaces never produce handoffs.
+- **Ignored projects and workspaces** (`ignoredProjectIds`, `ignoredWorkspaceIds`): switches grouped by
+  project. Ignoring a project covers all its workspaces, including ones created later; ignoring a
+  workspace covers just that one. Ignored agents never produce handoffs.
 
 ## Capabilities and limits
 

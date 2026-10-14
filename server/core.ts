@@ -8,6 +8,7 @@ export interface BatonClock {
 export function createPendingEntry(input: {
   agentId: string;
   workspaceId: string;
+  projectId?: string;
   cwd?: string;
   idleSince: number;
   delayMs: number;
@@ -17,6 +18,7 @@ export function createPendingEntry(input: {
   return {
     agentId: input.agentId,
     workspaceId: input.workspaceId,
+    projectId: input.projectId,
     cwd: input.cwd,
     idleSince: input.idleSince,
     fireAt,
@@ -64,6 +66,7 @@ export interface PlanRecoveryInput {
   now: number;
   knownAgentIds: ReadonlySet<string>;
   ignoredWorkspaceIds?: ReadonlySet<string>;
+  ignoredProjectIds?: ReadonlySet<string>;
   handoffPath: (agentId: string) => string | null;
   retentionMs: number;
 }
@@ -105,6 +108,7 @@ function decideEntry(
   }
   if (!input.knownAgentIds.has(agentId)) return { kind: "drop" };
   if (input.ignoredWorkspaceIds?.has(entry.workspaceId)) return { kind: "drop" };
+  if (entry.projectId && input.ignoredProjectIds?.has(entry.projectId)) return { kind: "drop" };
   if (entry.status === "writing") {
     const existing = input.handoffPath(agentId);
     if (existing) return { kind: "recoverDone", path: existing };

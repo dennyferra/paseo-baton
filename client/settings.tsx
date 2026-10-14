@@ -1,5 +1,5 @@
 import { useSettings, usePaseo, type PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { SettingsInput, SettingsSection, SettingsSwitch } from "@getpaseo/plugin/client/ui";
+import { SettingsCard, SettingsInput, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import type { PaseoApi } from "@getpaseo/client";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -16,6 +16,7 @@ interface WorkspaceChoice {
   id: string;
   name: string;
   project: string;
+  projectId: string;
 }
 
 const SAME_AS_RUNNING = "";
@@ -80,6 +81,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
             id: workspace.id,
             name: workspace.name,
             project: workspace.projectDisplayName,
+            projectId: workspace.projectId,
           })),
         );
       } catch (error: unknown) {
@@ -119,6 +121,20 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         fontSize: layout.compact ? 13 : 14,
         fontWeight: "600" as const,
       },
+      sectionTitle: {
+        color: theme.colors.foreground,
+        fontSize: layout.compact ? 17 : 19,
+        fontWeight: "700" as const,
+        marginTop: layout.compact ? 12 : 16,
+        marginBottom: 8,
+      },
+      subTitle: {
+        color: theme.colors.foreground,
+        fontSize: layout.compact ? 15 : 16,
+        fontWeight: "600" as const,
+        marginTop: 12,
+        marginBottom: 6,
+      },
       save: {
         marginTop: layout.compact ? 8 : 12,
         padding: 12,
@@ -141,11 +157,13 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
   );
 
   const projects = useMemo(() => {
-    const grouped = new Map<string, WorkspaceChoice[]>();
+    const grouped = new Map<string, { name: string; items: WorkspaceChoice[] }>();
     for (const workspace of workspaces) {
-      grouped.set(workspace.project, [...(grouped.get(workspace.project) ?? []), workspace]);
+      const group = grouped.get(workspace.projectId) ?? { name: workspace.project, items: [] };
+      group.items.push(workspace);
+      grouped.set(workspace.projectId, group);
     }
-    return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
+    return [...grouped.entries()].sort(([, a], [, b]) => a.name.localeCompare(b.name));
   }, [workspaces]);
 
   if (!draft) {
@@ -169,6 +187,11 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     profileOptions.push({ value: draft.handoffProfileId, name: "Unknown profile", detail: draft.handoffProfileId });
   }
 
+  const toggleProject = (id: string, ignored: boolean) => {
+    const rest = draft.ignoredProjectIds.filter((existing) => existing !== id);
+    update({ ignoredProjectIds: ignored ? [...rest, id] : rest });
+  };
+
   const toggleWorkspace = (id: string, ignored: boolean) => {
     const rest = draft.ignoredWorkspaceIds.filter((existing) => existing !== id);
     update({ ignoredWorkspaceIds: ignored ? [...rest, id] : rest });
@@ -182,15 +205,17 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 24 }}>
-      <SettingsSection title="When to write a handoff">
+      <Text style={styles.sectionTitle}>When to write a handoff</Text>
+      <SettingsCard>
         <SettingsInput
           label="Idle delay (minutes)"
           hint="Write a handoff once an agent has been idle this long (1-240)."
           initialValue={String(draft.idleDelayMinutes)}
           onChangeText={(value) => update({ idleDelayMinutes: clampDelay(value, draft.idleDelayMinutes) })}
         />
-      </SettingsSection>
-      <SettingsSection title="Handoff writer">
+      </SettingsCard>
+      <Text style={styles.sectionTitle}>Handoff writer</Text>
+      <SettingsCard>
         <Text style={[styles.hint, { marginBottom: 8 }]}>
           Provider, model and effort come from the profile; its mode is ignored so the writer can save the file.
         </Text>
@@ -210,24 +235,36 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
             </Pressable>
           );
         })}
-      </SettingsSection>
-      {projects.length > 0 ? (
-        <Text style={[styles.hint, { marginBottom: 8 }]}>
-          Ignored workspaces: agents in checked workspaces never produce handoffs.
-        </Text>
-      ) : null}
-      {projects.map(([project, items]) => (
-        <SettingsSection key={project} title={project}>
-          {items.map((workspace) => (
-            <SettingsSwitch
-              key={workspace.id}
-              label={workspace.name}
-              value={draft.ignoredWorkspaceIds.includes(workspace.id)}
-              onValueChange={(value) => toggleWorkspace(workspace.id, value)}
-            />
-          ))}
-        </SettingsSection>
-      ))}
+      </SettingsCard>
+      <Text style={styles.sectionTitle}>Ignored projects and workspaces</Text>
+      <Text style={[styles.hint, { marginBottom: 8 }]}>
+        Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers all of its
+        workspaces, including ones created later.
+      </Text>
+      {projects.map(([projectId, group]) => {
+        const projectIgnored = draft.ignoredProjectIds.includes(projectId);
+        return (
+          <View key={projectId}>
+            <Text style={styles.subTitle}>{group.name}</Text>
+            <SettingsCard>
+              <SettingsSwitch
+                label="Ignore entire project"
+                value={projectIgnored}
+                onValueChange={(value) => toggleProject(projectId, value)}
+              />
+              {group.items.map((workspace) => (
+                <SettingsSwitch
+                  key={workspace.id}
+                  label={workspace.name}
+                  value={projectIgnored || draft.ignoredWorkspaceIds.includes(workspace.id)}
+                  disabled={projectIgnored}
+                  onValueChange={(value) => toggleWorkspace(workspace.id, value)}
+                />
+              ))}
+            </SettingsCard>
+          </View>
+        );
+      })}
       {loadError ? <Text style={styles.error}>Could not load profiles or workspaces: {loadError}</Text> : null}
       {settings.status === "invalid" ? <Text style={styles.error}>{settings.error}</Text> : null}
       {settings.saveError ? <Text style={styles.error}>{settings.saveError}</Text> : null}

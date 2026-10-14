@@ -43,6 +43,7 @@ function settings(
     idleDelayMinutes: 15,
     handoffProfileId: "",
     ignoredWorkspaceIds: [],
+    ignoredProjectIds: [],
   },
 ) {
   return {
@@ -94,7 +95,7 @@ function stubPaseo(opts: { createId?: string } = {}) {
     },
     workspaces: {
       ref: (workspaceId: string) => ({
-        refresh: async () => ({ id: workspaceId, workspaceDirectory: "/work" }),
+        refresh: async () => ({ id: workspaceId, projectId: "proj-1", workspaceDirectory: "/work" }),
         agents: {
           create: async (options: Record<string, unknown>) => {
             calls.push(`create:${workspaceId}`);
@@ -241,7 +242,7 @@ describe("BatonController", () => {
     const io = memoryIo();
     const controller = new BatonController({
       dataDir: "/home/.paseo/paseo-baton",
-      settings: settings({ idleDelayMinutes: 20, handoffProfileId: "", ignoredWorkspaceIds: [] }),
+      settings: settings({ idleDelayMinutes: 20, handoffProfileId: "", ignoredWorkspaceIds: [], ignoredProjectIds: [] }),
       log: () => {},
       io,
       now: () => NOW,
@@ -258,7 +259,7 @@ describe("BatonController", () => {
     const io = memoryIo();
     const controller = new BatonController({
       dataDir: "/home/.paseo/paseo-baton",
-      settings: settings({ idleDelayMinutes: 15, handoffProfileId: "", ignoredWorkspaceIds: ["wks-a"] }),
+      settings: settings({ idleDelayMinutes: 15, handoffProfileId: "", ignoredWorkspaceIds: ["wks-a"], ignoredProjectIds: [] }),
       log: () => {},
       io,
       now: () => NOW,
@@ -266,6 +267,22 @@ describe("BatonController", () => {
     const { paseo } = stubPaseo();
     await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: "parent-1" }, [], paseo as never);
     await controller.onTurnEnded({ id: "agent-b", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+    await controller.dispose();
+    const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+    expect(Object.keys(state)).toEqual([]);
+  });
+
+  it("does not schedule handoffs for ignored projects", async () => {
+    const io = memoryIo();
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/paseo-baton",
+      settings: settings({ idleDelayMinutes: 15, handoffProfileId: "", ignoredWorkspaceIds: [], ignoredProjectIds: ["proj-1"] }),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo } = stubPaseo();
+    await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
     expect(Object.keys(state)).toEqual([]);
@@ -292,6 +309,7 @@ describe("BatonController", () => {
         idleDelayMinutes: 15,
         handoffProfileId: "profile-1",
         ignoredWorkspaceIds: [],
+    ignoredProjectIds: [],
       }),
       log: () => {},
       io,
