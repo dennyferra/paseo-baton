@@ -44,8 +44,7 @@ export const MIN_FIRE_DELAY_MS = 1000;
 
 export const batonSettingsSchema = z.object({
   idleDelayMinutes: z.number().int().min(1).max(240).default(DEFAULT_IDLE_DELAY_MINUTES),
-  handoffProviderModel: z.string().trim().max(200).default(""),
-  handoffThinkingOptionId: z.string().trim().max(100).default(""),
+  handoffProfileId: z.string().trim().max(200).default(""),
   ignoredWorkspaceIds: z.array(z.string()).default([]),
 });
 export type BatonSettings = z.infer<typeof batonSettingsSchema>;
@@ -55,13 +54,13 @@ export const DEFAULT_SETTINGS: BatonSettings = batonSettingsSchema.parse({});
 export const batonSettings = defineSettings({
   id: "baton",
   scope: "host",
-  version: 3,
+  version: 4,
   schema: batonSettingsSchema,
   migrate: (values) => {
     const old = values && typeof values === "object" ? (values as Record<string, unknown>) : {};
     return {
       ...DEFAULT_SETTINGS,
-      ...(typeof old.handoffProviderModel === "string" ? { handoffProviderModel: old.handoffProviderModel } : {}),
+      ...(typeof old.idleDelayMinutes === "number" ? { idleDelayMinutes: old.idleDelayMinutes } : {}),
       ...(Array.isArray(old.ignoredWorkspaceIds) ? { ignoredWorkspaceIds: old.ignoredWorkspaceIds } : {}),
     };
   },

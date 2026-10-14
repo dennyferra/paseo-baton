@@ -402,10 +402,9 @@ export class BatonController {
     try {
       await this.io.mkdir(path.dirname(handoffPath));
       const settings = await this.readSettings();
-      const configured = settings.handoffProviderModel.trim();
-      const writer = configured
-        ? { providerModel: configured, thinkingOptionId: settings.handoffThinkingOptionId.trim() || null }
-        : await this.agentProviderModel(paseo, agentId);
+      const writer =
+        (await this.profileProviderModel(paseo, settings.handoffProfileId)) ??
+        (await this.agentProviderModel(paseo, agentId));
       if (writer && writer.providerModel.includes("/")) {
         await this.spawnHandoffWriter(entry, handoffPath, writer, paseo);
       } else {
@@ -428,6 +427,26 @@ export class BatonController {
       return;
     }
     this.setFallbackTimer(agentId);
+  }
+
+  // Only provider/model/effort are applied; a profile's mode (e.g. plan) would stop the writer saving the file.
+  private async profileProviderModel(
+    paseo: PaseoApi,
+    profileId: string,
+  ): Promise<{ providerModel: string; thinkingOptionId: string | null } | null> {
+    if (!profileId) return null;
+    try {
+      const { config } = await paseo.config.get();
+      const profile = config.agentProfiles?.find((candidate) => candidate.id === profileId);
+      if (!profile) return null;
+      return {
+        providerModel: buildProviderModel(profile.provider, profile.model ?? null),
+        thinkingOptionId: profile.thinkingOptionId ?? null,
+      };
+    } catch (error: unknown) {
+      this.log(`Reading agent profile ${profileId} failed: ${String(error)}`);
+      return null;
+    }
   }
 
   private async agentProviderModel(

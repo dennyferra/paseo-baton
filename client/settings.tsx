@@ -5,10 +5,9 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import type { BatonSettings } from "../shared/baton";
 import { batonSettings, DEFAULT_SETTINGS } from "../shared/baton";
 
-interface ModelChoice {
+interface ProfileChoice {
   value: string;
   label: string;
-  effortOptions: Array<{ label: string; value: string }>;
 }
 
 interface WorkspaceChoice {
@@ -29,7 +28,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
   const settings = useSettings(batonSettings);
   const paseo = usePaseo();
   const [draft, setDraft] = useState<BatonSettings | null>(null);
-  const [models, setModels] = useState<ModelChoice[]>([]);
+  const [profiles, setProfiles] = useState<ProfileChoice[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceChoice[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -43,24 +42,14 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     let cancelled = false;
     void (async () => {
       try {
-        const [snapshot, listed] = await Promise.all([paseo.providers.snapshot(), paseo.workspaces.list()]);
+        const [daemon, listed] = await Promise.all([paseo.config.get(), paseo.workspaces.list()]);
         if (cancelled) return;
-        const choices: ModelChoice[] = [];
-        for (const entry of snapshot.entries) {
-          if (!entry.enabled || entry.status !== "ready") continue;
-          for (const model of entry.models ?? []) {
-            if (model.isSelectable === false) continue;
-            choices.push({
-              value: `${entry.provider}/${model.id}`,
-              label: `${entry.label ?? entry.provider} / ${model.label}`,
-              effortOptions: (model.thinkingOptions ?? []).map((option) => ({
-                label: option.label,
-                value: option.id,
-              })),
-            });
-          }
-        }
-        setModels(choices);
+        setProfiles(
+          (daemon.config.agentProfiles ?? []).map((profile) => ({
+            value: profile.id,
+            label: profile.name,
+          })),
+        );
         setWorkspaces(
           listed.entries.map((workspace) => ({
             id: workspace.id,
@@ -129,16 +118,11 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     setDraft((current) => (current ? { ...current, ...patch } : current));
   };
 
-  const modelOptions = [
-    { label: "Same as running agent", value: SAME_AS_RUNNING },
-    ...models.map(({ value, label }) => ({ label, value })),
-  ];
-  // Keep a previously saved model selectable even if its provider is currently unavailable.
-  if (draft.handoffProviderModel && !models.some((model) => model.value === draft.handoffProviderModel)) {
-    modelOptions.push({ label: draft.handoffProviderModel, value: draft.handoffProviderModel });
+  const profileOptions = [{ label: "Same as running agent", value: SAME_AS_RUNNING }, ...profiles];
+  // Keep a saved profile selectable while the list loads or if the profile was deleted.
+  if (draft.handoffProfileId && !profiles.some((profile) => profile.value === draft.handoffProfileId)) {
+    profileOptions.push({ label: "Unknown profile", value: draft.handoffProfileId });
   }
-  const selectedModel = models.find((model) => model.value === draft.handoffProviderModel);
-  const effortOptions = [{ label: "Model default", value: "" }, ...(selectedModel?.effortOptions ?? [])];
 
   const toggleWorkspace = (id: string, ignored: boolean) => {
     const rest = draft.ignoredWorkspaceIds.filter((existing) => existing !== id);
@@ -163,20 +147,12 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       </SettingsSection>
       <SettingsSection title="Handoff writer">
         <SettingsSelect
-          label="Model"
-          hint="The agent that writes the handoff. Defaults to the idle agent's own model and effort."
-          value={draft.handoffProviderModel}
-          options={modelOptions}
-          onValueChange={(value) => update({ handoffProviderModel: value, handoffThinkingOptionId: "" })}
+          label="Agent profile"
+          hint="Provider, model and effort come from the profile (its mode is ignored). Defaults to the idle agent's own."
+          value={draft.handoffProfileId}
+          options={profileOptions}
+          onValueChange={(value) => update({ handoffProfileId: value })}
         />
-        {selectedModel && selectedModel.effortOptions.length > 0 ? (
-          <SettingsSelect
-            label="Effort"
-            value={draft.handoffThinkingOptionId}
-            options={effortOptions}
-            onValueChange={(value) => update({ handoffThinkingOptionId: value })}
-          />
-        ) : null}
       </SettingsSection>
       {projects.length > 0 ? (
         <Text style={[styles.hint, { marginBottom: 8 }]}>
@@ -195,7 +171,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
           ))}
         </SettingsSection>
       ))}
-      {loadError ? <Text style={styles.error}>Could not load providers or workspaces: {loadError}</Text> : null}
+      {loadError ? <Text style={styles.error}>Could not load profiles or workspaces: {loadError}</Text> : null}
       {settings.status === "invalid" ? <Text style={styles.error}>{settings.error}</Text> : null}
       {settings.saveError ? <Text style={styles.error}>{settings.saveError}</Text> : null}
       <Pressable

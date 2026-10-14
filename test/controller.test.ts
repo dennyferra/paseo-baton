@@ -41,8 +41,7 @@ function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files:
 function settings(
   values: BatonSettings = {
     idleDelayMinutes: 15,
-    handoffProviderModel: "",
-    handoffThinkingOptionId: "",
+    handoffProfileId: "",
     ignoredWorkspaceIds: [],
   },
 ) {
@@ -81,6 +80,15 @@ function stubPaseo(opts: { createId?: string } = {}) {
             calls.push(`append:${agentId}`);
             return { seq: 1, epoch: "e" };
           },
+        },
+      }),
+    },
+    config: {
+      get: async () => ({
+        config: {
+          agentProfiles: [
+            { id: "profile-1", name: "Planner", provider: "claude", model: "claude-haiku-5-5", modeId: "plan", thinkingOptionId: "low" },
+          ],
         },
       }),
     },
@@ -233,7 +241,7 @@ describe("BatonController", () => {
     const io = memoryIo();
     const controller = new BatonController({
       dataDir: "/home/.paseo/paseo-baton",
-      settings: settings({ idleDelayMinutes: 20, handoffProviderModel: "", handoffThinkingOptionId: "", ignoredWorkspaceIds: [] }),
+      settings: settings({ idleDelayMinutes: 20, handoffProfileId: "", ignoredWorkspaceIds: [] }),
       log: () => {},
       io,
       now: () => NOW,
@@ -250,7 +258,7 @@ describe("BatonController", () => {
     const io = memoryIo();
     const controller = new BatonController({
       dataDir: "/home/.paseo/paseo-baton",
-      settings: settings({ idleDelayMinutes: 15, handoffProviderModel: "", handoffThinkingOptionId: "", ignoredWorkspaceIds: ["wks-a"] }),
+      settings: settings({ idleDelayMinutes: 15, handoffProfileId: "", ignoredWorkspaceIds: ["wks-a"] }),
       log: () => {},
       io,
       now: () => NOW,
@@ -263,7 +271,7 @@ describe("BatonController", () => {
     expect(Object.keys(state)).toEqual([]);
   });
 
-  it("spawns a handoff writer with the configured model and finalizes from its turn", async () => {
+  it("spawns a handoff writer from the configured profile (provider, model, effort; no mode) and finalizes from its turn", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({
         "agent-a": {
@@ -282,15 +290,14 @@ describe("BatonController", () => {
       dataDir: "/home/.paseo/paseo-baton",
       settings: settings({
         idleDelayMinutes: 15,
-        handoffProviderModel: "claude/claude-sonnet-5-5",
-        handoffThinkingOptionId: "high",
+        handoffProfileId: "profile-1",
         ignoredWorkspaceIds: [],
       }),
       log: () => {},
       io,
       now: () => NOW,
     });
-    const { paseo, calls, archived } = stubPaseo({ createId: "writer-1" });
+    const { paseo, calls, archived, created } = stubPaseo({ createId: "writer-1" });
     await controller.ensureRecovered(paseo as never);
     await controller.onTurnEnded(
       { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
@@ -298,6 +305,7 @@ describe("BatonController", () => {
       paseo as never,
     );
     expect(calls).toContain("create:wks-a");
+    expect(created[0].config).toEqual({ provider: "claude/claude-haiku-5-5", thinkingOptionId: "low" });
     expect(archived).toContain("writer-1");
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));

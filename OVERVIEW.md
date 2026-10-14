@@ -31,10 +31,10 @@ Settings live under Settings -> Plugins -> Baton.
 
 - **Idle delay** (`idleDelayMinutes`, default 15, 1-240): how long an agent sits idle before a
   handoff is written. It does not depend on any provider's prompt cache.
-- **Handoff writer** (`handoffProviderModel`, `handoffThinkingOptionId`): pick the writer's model and
-  effort from the live provider list. The default, "Same as running agent", uses the idle agent's own
-  model and effort. The writer is a short-lived dedicated agent archived after its turn, so the idle
-  agent's chat only shows the Handoff saved row.
+- **Handoff writer** (`handoffProfileId`): pick one of your Paseo agent profiles. Its provider,
+  model and effort are used; its mode is ignored so the writer can save the file. The default,
+  "Same as running agent", uses the idle agent's own model and effort. The writer is a short-lived
+  dedicated agent archived after its turn, so the idle agent's chat only shows the Handoff saved row.
 - **Ignored workspaces** (`ignoredWorkspaceIds`): a checklist grouped by project. Checked
   workspaces never produce handoffs.
 
