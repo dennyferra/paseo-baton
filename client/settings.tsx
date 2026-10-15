@@ -1,6 +1,7 @@
 import { useSettings, usePaseo, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { SettingsCard, SettingsInput, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import type { PaseoApi } from "@getpaseo/client";
+import { useToast } from "@getpaseo/plugin/client/react-native";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { BatonSettings } from "../shared/baton";
@@ -48,6 +49,7 @@ function clampDelay(value: string, fallback: number): number {
 export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
   const settings = useSettings(batonSettings);
   const paseo = usePaseo();
+  const toast = useToast();
   const [draft, setDraft] = useState<BatonSettings | null>(null);
   const [profiles, setProfiles] = useState<ProfileChoice[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceChoice[]>([]);
@@ -200,7 +202,12 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
   const onSave = async () => {
     if (settings.status !== "ready") return;
     const ok = await settings.save(draft, settings.revision);
-    if (ok) await settings.reload();
+    if (ok) {
+      await settings.reload();
+      toast.show("Baton settings saved", { variant: "success" });
+    } else {
+      toast.error("Could not save Baton settings");
+    }
   };
 
   return (
