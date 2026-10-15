@@ -1,4 +1,5 @@
 import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
+import { OPEN_AGENT_SCREEN_ID } from "./open-agent";
 import { BATON_WRITER_LABEL, batonRowSchema, continueHandoffRpc, setEnabledRpc, wakeRpc } from "../shared/baton";
 
 export interface BatonHandoffInfo {
@@ -74,9 +75,14 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
               kind: "action" as const,
               onPress(): void {
                 if (!info) return;
-                void client.rpc(continueHandoffRpc, { agentId, path: info.path }).catch((error: unknown) => {
-                  console.error(`[baton] continue failed: ${String(error)}`);
-                });
+                void client
+                  .rpc(continueHandoffRpc, { agentId, path: info.path })
+                  .then(({ agentId: newAgentId }) => {
+                    client.openScreen({ screenId: OPEN_AGENT_SCREEN_ID, params: { agentId: newAgentId } });
+                  })
+                  .catch((error: unknown) => {
+                    console.error(`[baton] continue failed: ${String(error)}`);
+                  });
               },
             },
           },

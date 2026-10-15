@@ -1,6 +1,7 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { createBatonPills } from "./client/baton-pill";
 import { BatonRow, setOpenHandoff } from "./client/baton-row";
+import { OPEN_AGENT_SCREEN_ID, OpenAgentScreen } from "./client/open-agent";
 import { BatonSettingsScreen } from "./client/settings";
 import { batonRowSchema, openHandoffRpc } from "./shared/baton";
 
@@ -17,6 +18,12 @@ export default function contribute(client: PluginClientContext) {
     title: "Baton",
     icon: "Settings",
     Component: BatonSettingsScreen,
+  });
+
+  client.addScreen({
+    id: OPEN_AGENT_SCREEN_ID,
+    title: "Handoff agent",
+    Component: OpenAgentScreen,
   });
 
   setOpenHandoff((path) => client.rpc(openHandoffRpc, { path }));
