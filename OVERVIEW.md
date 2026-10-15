@@ -15,7 +15,8 @@ workspace, using the template Task, Context, Relevant files, Current state, What
 Decisions, Acceptance criteria, and Constraints. If the agent cannot answer, Baton writes a
 mechanical handoff from the conversation snapshot instead, with no model call.
 
-Once the file exists, a "Handoff saved" row appears in that agent's chat. Every agent has a **Baton**
+Once the file exists, a "Handoff saved" row appears in that agent's chat; clicking its path opens an in-app
+view of the handoff for review, with a button to open the file in your default app. Every agent has a **Baton**
 chip in the composer that opens a menu:
 
 - **Continue from handoff** (only when a handoff exists) creates a new agent in the same workspace
@@ -26,7 +27,7 @@ chip in the composer that opens a menu:
 
 If you keep working in the original session after a handoff was saved and nobody continued it, Baton
 deletes the stale handoff file. A handoff that was already continued in a new agent is kept. The
-"Handoff saved" row stays in the chat history, but its link no longer opens anything.
+"Handoff saved" row stays in the chat history, but its link then says the handoff is no longer available.
 
 ## Setup
 

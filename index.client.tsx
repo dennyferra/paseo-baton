@@ -1,9 +1,10 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { createBatonPills } from "./client/baton-pill";
 import { BatonRow, setOpenHandoff } from "./client/baton-row";
+import { HANDOFF_VIEW_SCREEN_ID, HandoffViewScreen } from "./client/handoff-view";
 import { OPEN_AGENT_SCREEN_ID, OpenAgentScreen } from "./client/open-agent";
 import { BatonSettingsScreen } from "./client/settings";
-import { batonRowSchema, openHandoffRpc } from "./shared/baton";
+import { batonRowSchema } from "./shared/baton";
 
 export default function contribute(client: PluginClientContext) {
   client.addTimelineRenderer({
@@ -26,7 +27,16 @@ export default function contribute(client: PluginClientContext) {
     Component: OpenAgentScreen,
   });
 
-  setOpenHandoff((path) => client.rpc(openHandoffRpc, { path }));
+  client.addScreen({
+    id: HANDOFF_VIEW_SCREEN_ID,
+    title: "Handoff",
+    Component: HandoffViewScreen,
+  });
+
+  setOpenHandoff((path) => {
+    client.openScreen({ screenId: HANDOFF_VIEW_SCREEN_ID, params: { path } });
+    return Promise.resolve();
+  });
 
   const pills = createBatonPills({ client });
 

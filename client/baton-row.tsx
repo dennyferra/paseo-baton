@@ -48,7 +48,7 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
       <Text style={styles.title}>Handoff saved</Text>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Open the handoff file"
+        accessibilityLabel="Review the handoff"
         onPress={() => {
           if (openHandoff) void openHandoff(data.path).catch((error: unknown) => {
             console.error(`[baton] opening handoff failed: ${String(error)}`);
@@ -62,7 +62,7 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
       {data.continuedAgentId ? (
         <Text style={styles.hint}>Continued in agent {data.continuedAgentId}</Text>
       ) : (
-        <Text style={styles.hint}>Use the Baton pill in the composer to continue.</Text>
+        <Text style={styles.hint}>Use the Baton chip in the composer to continue.</Text>
       )}
     </View>
   );

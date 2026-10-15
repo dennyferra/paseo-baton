@@ -225,6 +225,18 @@ describe("BatonController", () => {
     await controller.dispose();
   });
 
+  it("reads a saved handoff for review and rejects unknown paths", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\n\nReview me",
+    });
+    const controller = makeController(io);
+    const { paseo } = stubPaseo();
+    expect(await controller.readHandoff(HANDOFF_PATH, paseo as never)).toEqual({ content: "# Task\n\nReview me" });
+    await expect(controller.readHandoff("/etc/passwd", paseo as never)).rejects.toThrow("no longer available");
+    await controller.dispose();
+  });
+
   it("keeps a continued handoff when the original session resumes", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({ "agent-a": { ...doneEntry(), continuedAgentId: "agent-b" } }),

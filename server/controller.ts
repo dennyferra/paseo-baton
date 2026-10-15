@@ -298,6 +298,20 @@ export class BatonController {
     return { recovered, handoffs, disabledAgentIds };
   }
 
+  async readHandoff(pathToRead: string, paseo: PaseoApi): Promise<{ content: string }> {
+    this.setPaseo(paseo);
+    await this.ensureRecovered(paseo);
+    const entry = [...this.entries.values()].find(
+      (candidate) => candidate.status === "done" && candidate.path === pathToRead,
+    );
+    if (!entry) throw new Error("This handoff is no longer available, the session was continued after it was saved.");
+    try {
+      return { content: await this.io.readFile(pathToRead) };
+    } catch {
+      throw new Error("The handoff file is missing.");
+    }
+  }
+
   async openHandoff(pathToOpen: string, paseo: PaseoApi): Promise<{ opened: boolean }> {
     this.setPaseo(paseo);
     await this.ensureRecovered(paseo);
