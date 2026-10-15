@@ -455,7 +455,6 @@ export class BatonController {
     const { agentId } = entry;
     if (this.disposed) return;
     const status = await this.agentStatus(paseo, agentId);
-    this.log(`fire agent=${agentId} status=${status}`);
     if (status !== "idle") {
       this.dropEntry(agentId);
       return;
@@ -463,7 +462,6 @@ export class BatonController {
     this.entries.set(agentId, markWriting(entry, this.now()));
     this.persistEntries();
     this.pendingHandoff.add(agentId);
-    this.log(`fire agent=${agentId} handoff started`);
     const handoffPath = await this.pathForEntry(entry, paseo);
     if (!handoffPath) {
       this.pendingHandoff.delete(agentId);
@@ -739,10 +737,13 @@ export class BatonController {
     agentId: string,
     data: RowData,
   ): Promise<void> {
+    // One row per handoff: idleSince is stable for the entry's life, so continuing updates the row in
+    // place, while a later handoff for the same agent gets its own row instead of reusing the old one.
+    const rowKey = this.entries.get(agentId)?.idleSince ?? 0;
     try {
       await paseo.agents.ref(agentId).timeline.append({
         type: "plugin",
-        id: `baton:${agentId}`,
+        id: `baton:${agentId}:${rowKey}`,
         kind: "baton-ready",
         version: 1,
         data,
