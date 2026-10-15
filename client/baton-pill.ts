@@ -1,5 +1,5 @@
 import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
-import { batonRowSchema, continueHandoffRpc } from "../shared/baton";
+import { BATON_WRITER_LABEL, batonRowSchema, continueHandoffRpc, setEnabledRpc, wakeRpc } from "../shared/baton";
 
 export interface BatonHandoffInfo {
   agentId: string;
@@ -12,6 +12,14 @@ export interface AgentLike {
   id: string;
   workspaceId?: string | null;
   archivedAt?: string | null;
+  status?: string;
+  parentAgentId?: string | null;
+  labels?: Record<string, string>;
+}
+
+interface TrackedAgent {
+  workspaceId: string;
+  status: string | undefined;
 }
 
 export interface BatonPillsDeps {
@@ -20,6 +28,7 @@ export interface BatonPillsDeps {
 
 export interface BatonPillsHandle {
   registerHandoff(info: BatonHandoffInfo): void;
+  refresh(): Promise<void>;
   dispose(): void;
 }
 
@@ -27,12 +36,16 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
   const pills = new Map<string, PluginButtonRegistration>();
   const subscriptions = new Map<string, () => void>();
   const infoByAgent = new Map<string, BatonHandoffInfo>();
+  const tracked = new Map<string, TrackedAgent>();
+  const disabled = new Set<string>();
   const controller = new AbortController();
 
   function removePill(agentId: string): void {
     pills.get(agentId)?.remove();
     pills.delete(agentId);
     infoByAgent.delete(agentId);
+    tracked.delete(agentId);
+    disabled.delete(agentId);
   }
 
   function releaseSubscription(agentId: string): void {
@@ -41,41 +54,118 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
     subscriptions.delete(agentId);
   }
 
-  function registerPill(info: BatonHandoffInfo): void {
-    infoByAgent.set(info.agentId, info);
-    const button = {
-      title: "Continue from handoff",
-      icon: "Play" as const,
-      label: "Continue",
+  function buildButton(agentId: string) {
+    const info = infoByAgent.get(agentId);
+    const isDisabled = disabled.has(agentId);
+    return {
+      title: "Baton",
+      icon: isDisabled ? ("Pause" as const) : ("Play" as const),
+      label: "Baton",
       behavior: {
-        kind: "action" as const,
-        onPress(): void {
-          void client
-            .rpc(continueHandoffRpc, { agentId: info.agentId, path: info.path })
-            .catch((error: unknown) => {
-              console.error(`[baton] continue failed: ${String(error)}`);
-            });
-        },
+        kind: "menu" as const,
+        items: [
+          {
+            kind: "item" as const,
+            id: "continue",
+            title: "Continue from handoff",
+            icon: "Play" as const,
+            visible: Boolean(info),
+            behavior: {
+              kind: "action" as const,
+              onPress(): void {
+                if (!info) return;
+                void client.rpc(continueHandoffRpc, { agentId, path: info.path }).catch((error: unknown) => {
+                  console.error(`[baton] continue failed: ${String(error)}`);
+                });
+              },
+            },
+          },
+          {
+            kind: "item" as const,
+            id: "toggle",
+            title: isDisabled ? "Turn on handoff for this session" : "Turn off handoff for this session",
+            icon: isDisabled ? ("Play" as const) : ("Pause" as const),
+            // Once a handoff exists there is nothing left to turn off.
+            disabled: !isDisabled && Boolean(info),
+            behavior: {
+              kind: "action" as const,
+              onPress(): void {
+                void client
+                  .rpc(setEnabledRpc, { agentId, enabled: isDisabled })
+                  .then(() => refresh())
+                  .catch((error: unknown) => {
+                    console.error(`[baton] toggle failed: ${String(error)}`);
+                  });
+              },
+            },
+          },
+        ],
       },
     };
-    const existing = pills.get(info.agentId);
+  }
+
+  function syncPill(agentId: string): void {
+    const agent = tracked.get(agentId);
+    if (!agent) return;
+    const button = buildButton(agentId);
+    const existing = pills.get(agentId);
     if (existing) {
       existing.update(button);
       return;
     }
     pills.set(
-      info.agentId,
-      client.addComposerPill({
-        id: "baton-continue",
-        workspaceId: info.workspaceId,
-        agentId: info.agentId,
-        button,
-      }),
+      agentId,
+      client.addComposerPill({ id: "baton", workspaceId: agent.workspaceId, agentId, button }),
     );
+  }
+
+  function registerPill(info: BatonHandoffInfo): void {
+    infoByAgent.set(info.agentId, info);
+    if (!tracked.has(info.agentId)) tracked.set(info.agentId, { workspaceId: info.workspaceId, status: undefined });
+    syncPill(info.agentId);
+  }
+
+  let refreshing: Promise<void> | null = null;
+  function refresh(): Promise<void> {
+    if (refreshing) return refreshing;
+    refreshing = client
+      .rpc(wakeRpc, {})
+      .then(({ handoffs, disabledAgentIds }) => {
+        const ready = new Map(handoffs.map((info) => [info.agentId, info]));
+        disabled.clear();
+        for (const id of disabledAgentIds) disabled.add(id);
+        for (const agentId of tracked.keys()) {
+          const info = ready.get(agentId);
+          if (info) infoByAgent.set(agentId, info);
+          else infoByAgent.delete(agentId);
+          syncPill(agentId);
+        }
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        console.error(`[baton] refresh failed: ${String(error)}`);
+      })
+      .finally(() => {
+        refreshing = null;
+      });
+    return refreshing;
   }
 
   function observeAgent(agent: AgentLike): void {
     if (!agent.workspaceId || agent.archivedAt) return;
+    if (agent.parentAgentId || agent.labels?.[BATON_WRITER_LABEL]) return;
+    const known = tracked.get(agent.id);
+    if (known) {
+      // A status change (e.g. a new turn) can add or clear a handoff, so re-read the state.
+      if (known.status !== agent.status) {
+        known.status = agent.status;
+        void refresh();
+      }
+      return;
+    }
+    tracked.set(agent.id, { workspaceId: agent.workspaceId, status: agent.status });
+    syncPill(agent.id);
+    void refresh();
     if (subscriptions.has(agent.id)) return;
     let release: () => void;
     try {
@@ -133,6 +223,7 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
     registerHandoff(info: BatonHandoffInfo): void {
       registerPill(info);
     },
+    refresh,
     dispose(): void {
       controller.abort();
       for (const agentId of [...subscriptions.keys()]) releaseSubscription(agentId);

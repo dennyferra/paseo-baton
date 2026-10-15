@@ -1,7 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { BatonController } from "./server/controller";
 import { resolveDaemonHome, resolveDataDir } from "./server/paths";
-import { batonSettings, continueHandoffRpc, openHandoffRpc, wakeRpc } from "./shared/baton";
+import { batonSettings, continueHandoffRpc, openHandoffRpc, setEnabledRpc, wakeRpc } from "./shared/baton";
 
 export default function contribute(server: PluginServerContext) {
   const dataDir = resolveDataDir(resolveDaemonHome());
@@ -38,12 +38,14 @@ export default function contribute(server: PluginServerContext) {
     controller.openHandoff(input.path, context.paseo),
   );
 
+  server.handle(setEnabledRpc, (input, context) => controller.setEnabled(input, context.paseo));
+
   server.handle(wakeRpc, async (_input, context) => {
     try {
       return await controller.wake(context.paseo);
     } catch (error: unknown) {
       console.error(`[baton] wake failed: ${String(error)}`);
-      return { recovered: false, handoffs: [] };
+      return { recovered: false, handoffs: [], disabledAgentIds: [] };
     }
   });
 

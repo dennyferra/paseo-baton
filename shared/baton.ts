@@ -3,7 +3,7 @@ import { z } from "zod";
 
 export const BATON_PLUGIN_ID = "baton";
 
-export const BATON_STATUS = z.enum(["pending", "writing", "done", "skipped"]);
+export const BATON_STATUS = z.enum(["pending", "writing", "done", "skipped", "disabled"]);
 export type BatonStatus = z.infer<typeof BATON_STATUS>;
 
 export const batonEntrySchema = z.object({
@@ -115,5 +115,17 @@ export const wakeRpc = defineRpc({
   output: z.object({
     recovered: z.boolean(),
     handoffs: z.array(handoffInfoSchema),
+    disabledAgentIds: z.array(z.string()).default([]),
+  }),
+});
+
+export const setEnabledRpc = defineRpc({
+  name: "baton.set-enabled",
+  input: z.object({
+    agentId: z.string(),
+    enabled: z.boolean(),
+  }),
+  output: z.object({
+    enabled: z.boolean(),
   }),
 });

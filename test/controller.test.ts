@@ -169,6 +169,76 @@ describe("BatonController", () => {
     expect(state["agent-a"]).toBeUndefined();
   });
 
+  function makeController(io: ReturnType<typeof memoryIo>) {
+    return new BatonController({
+      dataDir: "/home/.paseo/paseo-baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+  }
+
+  it("skips idle handoffs while disabled for the session and resumes when re-enabled", async () => {
+    const io = memoryIo();
+    const controller = makeController(io);
+    const { paseo } = stubPaseo();
+    const agent = { id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null };
+    await controller.setEnabled({ agentId: "agent-a", enabled: false }, paseo as never);
+    await controller.onTurnEnded(agent, [], paseo as never);
+    controller.onTurnStarted({ id: "agent-a" });
+    await controller.onTurnEnded(agent, [], paseo as never);
+    let state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+    expect(state["agent-a"].status).toBe("disabled");
+    expect((await controller.wake(paseo as never)).disabledAgentIds).toEqual(["agent-a"]);
+    await controller.setEnabled({ agentId: "agent-a", enabled: true }, paseo as never);
+    await controller.onTurnEnded(agent, [], paseo as never);
+    state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+    expect(state["agent-a"].status).toBe("pending");
+    await controller.dispose();
+  });
+
+  it("refuses to disable once a handoff exists", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\n\nx",
+    });
+    const controller = makeController(io);
+    const { paseo } = stubPaseo();
+    await expect(controller.setEnabled({ agentId: "agent-a", enabled: false }, paseo as never)).rejects.toThrow(
+      "already exists",
+    );
+    await controller.dispose();
+  });
+
+  it("removes an uncontinued handoff when the original session resumes", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\n\nx",
+    });
+    const controller = makeController(io);
+    const { paseo } = stubPaseo();
+    await controller.ensureRecovered(paseo as never);
+    controller.onTurnStarted({ id: "agent-a" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(io.files.has(HANDOFF_PATH)).toBe(false);
+    await controller.dispose();
+  });
+
+  it("keeps a continued handoff when the original session resumes", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": { ...doneEntry(), continuedAgentId: "agent-b" } }),
+      [HANDOFF_PATH]: "# Task\n\nx",
+    });
+    const controller = makeController(io);
+    const { paseo } = stubPaseo();
+    await controller.ensureRecovered(paseo as never);
+    controller.onTurnStarted({ id: "agent-a" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(io.files.has(HANDOFF_PATH)).toBe(true);
+    await controller.dispose();
+  });
+
   it("keeps a done entry across recovery and continues it into a new agent", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),

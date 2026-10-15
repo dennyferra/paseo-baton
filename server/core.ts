@@ -44,6 +44,10 @@ export function markSkipped(entry: BatonEntry, now: number): BatonEntry {
   return transition(entry, { status: "skipped" }, now);
 }
 
+export function markDisabled(entry: BatonEntry, now: number): BatonEntry {
+  return transition(entry, { status: "disabled" }, now);
+}
+
 export function markContinued(entry: BatonEntry, continuedAgentId: string, now: number): BatonEntry {
   return transition(entry, { continuedAgentId }, now);
 }
@@ -56,6 +60,7 @@ export type RecoveryAction =
   | { kind: "drop" }
   | { kind: "keepDone" }
   | { kind: "keepSkipped" }
+  | { kind: "keepDisabled" }
   | { kind: "markSkipped" }
   | { kind: "fireNow" }
   | { kind: "schedule"; delayMs: number }
@@ -107,6 +112,7 @@ function decideEntry(
     return age >= input.retentionMs ? { kind: "drop" } : { kind: "keepSkipped" };
   }
   if (!input.knownAgentIds.has(agentId)) return { kind: "drop" };
+  if (entry.status === "disabled") return { kind: "keepDisabled" };
   if (input.ignoredWorkspaceIds?.has(entry.workspaceId)) return { kind: "drop" };
   if (entry.projectId && input.ignoredProjectIds?.has(entry.projectId)) return { kind: "drop" };
   if (entry.status === "writing") {

@@ -2,7 +2,7 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { createBatonPills } from "./client/baton-pill";
 import { BatonRow, setOpenHandoff } from "./client/baton-row";
 import { BatonSettingsScreen } from "./client/settings";
-import { batonRowSchema, openHandoffRpc, wakeRpc } from "./shared/baton";
+import { batonRowSchema, openHandoffRpc } from "./shared/baton";
 
 export default function contribute(client: PluginClientContext) {
   client.addTimelineRenderer({
@@ -23,14 +23,7 @@ export default function contribute(client: PluginClientContext) {
 
   const pills = createBatonPills({ client });
 
-  void client
-    .rpc(wakeRpc, {})
-    .then(({ handoffs }) => {
-      for (const info of handoffs) pills.registerHandoff(info);
-    })
-    .catch((error: unknown) => {
-      console.error(`[baton] wake failed: ${String(error)}`);
-    });
+  void pills.refresh();
 
   return () => {
     pills.dispose();

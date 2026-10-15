@@ -14,6 +14,7 @@ import {
 import {
   createPendingEntry,
   markContinued,
+  markDisabled,
   markDone,
   markSkipped,
   markWriting,
@@ -169,9 +170,59 @@ export class BatonController {
     if (this.pendingHandoff.has(agentId)) {
       return;
     }
-    if (this.entries.delete(agentId)) {
-      this.persistEntries();
+    const entry = this.entries.get(agentId);
+    if (!entry || entry.status === "disabled") return;
+    this.entries.delete(agentId);
+    this.persistEntries();
+    // The user kept working in this session, so a handoff nobody continued is stale.
+    if (entry.status === "done" && entry.path && !entry.continuedAgentId) {
+      void this.io.unlink(entry.path).catch((error: unknown) => {
+        this.log(`Removing stale handoff ${entry.path} failed: ${String(error)}`);
+      });
     }
+  }
+
+  async setEnabled(
+    input: { agentId: string; enabled: boolean },
+    paseo: PaseoApi,
+  ): Promise<{ enabled: boolean }> {
+    this.setPaseo(paseo);
+    await this.ensureRecovered(paseo);
+    const existing = this.entries.get(input.agentId);
+    if (input.enabled) {
+      if (existing?.status === "disabled") {
+        this.entries.delete(input.agentId);
+        await this.persistEntries();
+      }
+      return { enabled: true };
+    }
+    if (existing?.status === "disabled") return { enabled: false };
+    if (existing?.status === "done") throw new Error("A handoff already exists for this agent.");
+    const snapshot = await paseo.agents.ref(input.agentId).refresh();
+    if (!snapshot) throw new Error("The agent no longer exists.");
+    const workspaceId = snapshot.agent.workspaceId ?? existing?.workspaceId;
+    if (!workspaceId) throw new Error("The agent has no workspace.");
+    this.clearTimer(input.agentId);
+    this.clearFallbackTimer(input.agentId);
+    const now = this.now();
+    this.entries.set(
+      input.agentId,
+      markDisabled(
+        existing ?? {
+          agentId: input.agentId,
+          workspaceId,
+          cwd: snapshot.agent.cwd,
+          idleSince: now,
+          fireAt: now,
+          deadline: now,
+          updatedAt: now,
+          status: "pending",
+        },
+        now,
+      ),
+    );
+    await this.persistEntries();
+    return { enabled: false };
   }
 
   onClosed(agent: { id: string }): void {
@@ -226,11 +277,15 @@ export class BatonController {
     return { agentId: newAgentId, title };
   }
 
-  async wake(paseo: PaseoApi): Promise<{ recovered: boolean; handoffs: BatonHandoffInfo[] }> {
+  async wake(
+    paseo: PaseoApi,
+  ): Promise<{ recovered: boolean; handoffs: BatonHandoffInfo[]; disabledAgentIds: string[] }> {
     this.setPaseo(paseo);
     const recovered = await this.ensureRecovered(paseo);
     const handoffs: BatonHandoffInfo[] = [];
+    const disabledAgentIds: string[] = [];
     for (const entry of this.entries.values()) {
+      if (entry.status === "disabled") disabledAgentIds.push(entry.agentId);
       if (entry.status === "done" && entry.path) {
         handoffs.push({
           agentId: entry.agentId,
@@ -240,7 +295,7 @@ export class BatonController {
         });
       }
     }
-    return { recovered, handoffs };
+    return { recovered, handoffs, disabledAgentIds };
   }
 
   async openHandoff(pathToOpen: string, paseo: PaseoApi): Promise<{ opened: boolean }> {
@@ -355,6 +410,7 @@ export class BatonController {
     if (this.writerAgentIds.has(agent.id)) {
       return;
     }
+    if (this.entries.get(agent.id)?.status === "disabled") return;
     const settings = await this.readSettings();
     if (settings.ignoredWorkspaceIds.includes(agent.workspaceId)) {
       return;
