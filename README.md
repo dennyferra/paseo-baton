@@ -89,3 +89,7 @@ Server code must not import client code, and the reverse.
   link then reports the handoff is no longer available.
 - The Baton chip's state refreshes when an agent's status changes, so a menu left open can be stale
   after you change settings.
+
+## License
+
+Copyright 2026 Denny Ferrassoli. Licensed under the [Apache License 2.0](LICENSE).
