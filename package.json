@@ -27,6 +27,7 @@
     "client/",
     "server/",
     "shared/",
+    "assets/",
     "index.client.tsx",
     "index.server.ts",
     "paseo-plugin.json",

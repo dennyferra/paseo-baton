@@ -6,6 +6,8 @@ When an agent finishes a turn and then sits idle, Baton has a short-lived writer
 handoff document. You can later continue the task in a fresh agent, or hand it to a different
 model, without re-reading the whole conversation.
 
+![The Handoff saved row in an agent's chat](assets/handoff-saved.png)
+
 ## Features
 
 - **Automatic handoffs.** After an agent has been idle for a set time, Baton writes
