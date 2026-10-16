@@ -43,8 +43,8 @@ Requires Paseo 0.11.2 or newer. No accounts, tokens, or external tools.
 # from a local checkout
 paseo plugin install /path/to/paseo-baton
 
-# or from GitHub (private repos need git access on the daemon's machine)
-paseo plugin install git:https://github.com/dennyferra/paseo-baton.git
+# or straight from GitHub
+paseo plugin add git:dennyferra/paseo-baton
 ```
 
 Check it with `paseo plugin ls`, and read its logs with `paseo plugin logs baton`. After editing the
