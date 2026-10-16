@@ -12,6 +12,10 @@ The Baton chip in the composer:
 
 ![The Baton chip](assets/baton-chip.png)
 
+Its menu once a handoff exists, with turning handoffs off disabled:
+
+![The Baton menu](assets/baton-menu.png)
+
 ## Features
 
 - **Automatic handoffs.** After an agent has been idle for a set time, Baton writes
