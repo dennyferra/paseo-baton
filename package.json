@@ -1,19 +1,37 @@
 {
-  "name": "baton",
-  "private": true,
+  "name": "@dennyferra/baton",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "description": "Writes a handoff document when a Paseo agent goes idle, then lets you continue the task in a fresh agent.",
+  "author": "Denny Ferrassoli",
+  "keywords": [
+    "paseo",
+    "paseo-plugin",
+    "handoff",
+    "agents",
+    "coding-agents"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dennyferra/baton.git"
+  },
+  "homepage": "https://github.com/dennyferra/baton#readme",
+  "bugs": {
+    "url": "https://github.com/dennyferra/baton/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "files": [
-    "paseo-plugin.json",
-    "OVERVIEW.md",
-    "README.md",
-    "index.client.ts",
-    "index.client.tsx",
-    "index.server.ts",
-    "index.server.tsx",
     "client/",
     "server/",
     "shared/",
+    "index.client.tsx",
+    "index.server.ts",
+    "paseo-plugin.json",
+    "OVERVIEW.md",
+    "README.md",
     "LICENSE"
   ],
   "scripts": {
