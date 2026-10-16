@@ -18,12 +18,14 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@latest
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - name: Check the tag matches package.json
         run: |
           test "v$(node -p "require('./package.json').version")" = "${{ github.event.release.tag_name }}"
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # No token: npm authenticates this workflow through the trusted publisher set on npmjs.com,
+      # and adds provenance automatically.
+      - run: npm publish --access public
