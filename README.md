@@ -29,6 +29,8 @@ Its menu once a handoff exists, with turning handoffs off disabled:
 - **Baton chip.** Every agent gets a **Baton** chip in the composer with a menu:
   - **Continue from handoff** starts a new agent titled `[Handoff] <task>` in the same workspace
     and opens it.
+  - **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
+    available only for an idle session with no handoff yet and with handoffs turned on.
   - **Turn off / Turn on handoff for this session** pauses Baton for one agent. It is saved across
     restarts and disabled once a handoff exists. In an ignored workspace or project the menu says so.
 - **Stale handoff cleanup.** If you keep working in the original session and nobody continued the
@@ -101,6 +103,7 @@ Layout:
 - `server/` - controller, state store, handoff prompt and timeline summary (daemon side)
 - `client/` - Baton chip, chat row, handoff viewer and settings screen (app side)
 - `shared/` - Zod contracts, RPCs and settings shared by both sides; no runtime code from either side
+- `docs/` - maintainer notes, such as the registry submission text (not shipped in the package)
 - `test/` - Vitest tests for the controller, core state machine, store, summaries and markdown parser
 
 Server code must not import client code, and the reverse.

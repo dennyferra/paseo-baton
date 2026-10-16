@@ -80,6 +80,7 @@ function stubPaseo(opts: { createId?: string } = {}) {
           return { archivedAt: new Date().toISOString() };
         },
         timeline: {
+          refetch: async () => ({ entries: [] }),
           append: async (item: Record<string, unknown>) => {
             calls.push(`append:${agentId}`);
             appended.push(item);
@@ -110,7 +111,7 @@ function stubPaseo(opts: { createId?: string } = {}) {
       }),
     },
   };
-  return { paseo, calls, created, archived, appended };
+  return { paseo, calls, created, archived, appended, agents };
 }
 
 const STATE_FILE = "/home/.paseo/plugin-data/baton/baton-state.json";
@@ -218,6 +219,37 @@ describe("BatonController", () => {
     const { paseo } = stubPaseo();
     const result = await controller.wake(paseo as never, ["wks-a", "wks-b"]);
     expect(result.ignoredWorkspaces).toEqual({ "wks-a": "workspace", "wks-b": "project" });
+    await controller.dispose();
+  });
+
+  it("creates a handoff right away from the menu and refuses when it cannot", async () => {
+    const io = memoryIo();
+    const controller = makeController(io);
+    const { paseo, calls, agents } = stubPaseo({ createId: "writer-1" });
+    agents[0].status = "running";
+    await expect(controller.createNow({ agentId: "agent-a" }, paseo as never)).rejects.toThrow("still working");
+    agents[0].status = "idle";
+    expect(await controller.createNow({ agentId: "agent-a" }, paseo as never)).toEqual({ started: true });
+    for (let tries = 0; tries < 50 && !calls.includes("create:wks-a"); tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(calls).toContain("create:wks-a");
+    await expect(controller.createNow({ agentId: "agent-a" }, paseo as never)).rejects.toThrow("already being written");
+    await controller.onTurnEnded(
+      { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
+      [{ type: "assistant_message", text: "# Task\nShip it" }],
+      paseo as never,
+    );
+    expect(io.files.get(HANDOFF_PATH)).toContain("# Task\nShip it");
+    await expect(controller.createNow({ agentId: "agent-a" }, paseo as never)).rejects.toThrow("already exists");
+    await controller.dispose();
+  });
+
+  it("does not create a handoff now when handoffs are off for the agent", async () => {
+    const controller = makeController(memoryIo());
+    const { paseo } = stubPaseo();
+    await controller.setEnabled({ agentId: "agent-a", enabled: false }, paseo as never);
+    await expect(controller.createNow({ agentId: "agent-a" }, paseo as never)).rejects.toThrow("turned off");
     await controller.dispose();
   });
 

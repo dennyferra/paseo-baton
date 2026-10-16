@@ -131,7 +131,18 @@ export const wakeRpc = defineRpc({
     recovered: z.boolean(),
     handoffs: z.array(handoffInfoSchema),
     disabledAgentIds: z.array(z.string()).default([]),
+    writingAgentIds: z.array(z.string()).default([]),
     ignoredWorkspaces: z.record(z.string(), z.enum(["workspace", "project"])).default({}),
+  }),
+});
+
+export const createNowRpc = defineRpc({
+  name: "baton.create-now",
+  input: z.object({
+    agentId: z.string(),
+  }),
+  output: z.object({
+    started: z.boolean(),
   }),
 });
 

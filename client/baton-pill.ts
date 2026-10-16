@@ -1,6 +1,6 @@
 import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { OPEN_AGENT_SCREEN_ID } from "./open-agent";
-import { BATON_WRITER_LABEL, batonRowSchema, continueHandoffRpc, setEnabledRpc, wakeRpc } from "../shared/baton";
+import { BATON_WRITER_LABEL, batonRowSchema, continueHandoffRpc, createNowRpc, setEnabledRpc, wakeRpc } from "../shared/baton";
 
 export interface BatonHandoffInfo {
   agentId: string;
@@ -39,6 +39,7 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
   const infoByAgent = new Map<string, BatonHandoffInfo>();
   const tracked = new Map<string, TrackedAgent>();
   const disabled = new Set<string>();
+  const writing = new Set<string>();
   let ignoredWorkspaces: Record<string, "workspace" | "project"> = {};
   const controller = new AbortController();
 
@@ -48,6 +49,7 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
     infoByAgent.delete(agentId);
     tracked.delete(agentId);
     disabled.delete(agentId);
+    writing.delete(agentId);
   }
 
   function releaseSubscription(agentId: string): void {
@@ -84,6 +86,26 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
                   })
                   .catch((error: unknown) => {
                     console.error(`[baton] continue failed: ${String(error)}`);
+                  });
+              },
+            },
+          },
+          {
+            kind: "item" as const,
+            id: "create-now",
+            title: writing.has(agentId) ? "Creating handoff..." : "Create handoff now",
+            icon: "Play" as const,
+            visible: !ignoredBy,
+            // Needs a working, idle session with no handoff yet and automatic handoffs on.
+            disabled: Boolean(info) || isDisabled || writing.has(agentId) || tracked.get(agentId)?.status !== "idle",
+            behavior: {
+              kind: "action" as const,
+              onPress(): void {
+                void client
+                  .rpc(createNowRpc, { agentId })
+                  .then(() => refresh())
+                  .catch((error: unknown) => {
+                    console.error(`[baton] create handoff failed: ${String(error)}`);
                   });
               },
             },
@@ -138,6 +160,7 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
 
   function registerPill(info: BatonHandoffInfo): void {
     infoByAgent.set(info.agentId, info);
+    writing.delete(info.agentId);
     if (!tracked.has(info.agentId)) tracked.set(info.agentId, { workspaceId: info.workspaceId, status: undefined });
     syncPill(info.agentId);
   }
@@ -147,11 +170,13 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
     if (refreshing) return refreshing;
     refreshing = client
       .rpc(wakeRpc, { workspaceIds: [...new Set([...tracked.values()].map((agent) => agent.workspaceId))] })
-      .then(({ handoffs, disabledAgentIds, ignoredWorkspaces: ignored }) => {
+      .then(({ handoffs, disabledAgentIds, writingAgentIds, ignoredWorkspaces: ignored }) => {
         ignoredWorkspaces = ignored;
         const ready = new Map(handoffs.map((info) => [info.agentId, info]));
         disabled.clear();
         for (const id of disabledAgentIds) disabled.add(id);
+        writing.clear();
+        for (const id of writingAgentIds) writing.add(id);
         for (const agentId of tracked.keys()) {
           const info = ready.get(agentId);
           if (info) infoByAgent.set(agentId, info);

@@ -22,6 +22,9 @@ chip in the composer that opens a menu:
 - **Continue from handoff** (only when a handoff exists) creates a new agent in the same workspace
   titled `[Handoff] <task>` with the prompt to read the file and continue the task. The row updates
   to show which agent continued.
+- **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
+  available only for an idle session that has no handoff yet and has handoffs turned on, and is hidden
+  in an ignored workspace or project.
 - **Turn off / Turn on handoff for this session** stops Baton from writing a handoff for that agent.
   The state is saved, so it survives restarts. Turning off is disabled once a handoff exists. In an ignored workspace or project the menu shows
   a disabled note saying so instead of the toggle.

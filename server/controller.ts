@@ -158,6 +158,60 @@ export class BatonController {
     }
   }
 
+  /** Writes the handoff immediately instead of waiting for the idle timer. */
+  async createNow(input: { agentId: string }, paseo: PaseoApi): Promise<{ started: boolean }> {
+    this.setPaseo(paseo);
+    await this.ensureRecovered(paseo);
+    const { agentId } = input;
+    const existing = this.entries.get(agentId);
+    if (existing?.status === "done") throw new Error("A handoff already exists for this agent.");
+    if (existing?.status === "writing" || this.pendingHandoff.has(agentId)) {
+      throw new Error("A handoff is already being written for this agent.");
+    }
+    if (existing?.status === "disabled") throw new Error("Handoffs are turned off for this agent. Turn them on first.");
+    const snapshot = await paseo.agents.ref(agentId).refresh();
+    if (!snapshot) throw new Error("The agent no longer exists.");
+    const agent = snapshot.agent;
+    if (agent.status !== "idle") throw new Error("The agent is still working. Try again once it is idle.");
+    if (agent.labels?.[BATON_WRITER_LABEL]) throw new Error("Handoff writers do not get handoffs.");
+    if (!agent.workspaceId) throw new Error("The agent has no workspace.");
+    const settings = await this.readSettings();
+    if (settings.ignoredWorkspaceIds.includes(agent.workspaceId)) throw new Error("This workspace is ignored in Baton settings.");
+    const projectId = await this.workspaceProjectId(paseo, agent.workspaceId);
+    if (projectId && settings.ignoredProjectIds.includes(projectId)) {
+      throw new Error("This project is ignored in Baton settings.");
+    }
+    this.clearTimer(agentId);
+    if (!this.lastTimeline.has(agentId)) await this.loadTimeline(agentId, paseo);
+    const entry = createPendingEntry({
+      agentId,
+      workspaceId: agent.workspaceId,
+      projectId: projectId ?? undefined,
+      cwd: agent.cwd,
+      idleSince: this.now(),
+      delayMs: 0,
+    });
+    this.entries.set(agentId, entry);
+    await this.persistEntries();
+    void this.fire(entry, paseo).catch((error: unknown) => {
+      this.log(`Creating handoff now for ${agentId} failed: ${String(error)}`);
+    });
+    return { started: true };
+  }
+
+  // After a plugin reload there is no remembered turn, so read the recent conversation back.
+  private async loadTimeline(agentId: string, paseo: PaseoApi): Promise<void> {
+    try {
+      const page = await paseo.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: 200 });
+      this.lastTimeline.set(
+        agentId,
+        page.entries.map((entry) => entry.item),
+      );
+    } catch (error: unknown) {
+      this.log(`Reading the conversation for ${agentId} failed: ${String(error)}`);
+    }
+  }
+
   async setEnabled(
     input: { agentId: string; enabled: boolean },
     paseo: PaseoApi,
@@ -260,14 +314,17 @@ export class BatonController {
     recovered: boolean;
     handoffs: BatonHandoffInfo[];
     disabledAgentIds: string[];
+    writingAgentIds: string[];
     ignoredWorkspaces: Record<string, "workspace" | "project">;
   }> {
     this.setPaseo(paseo);
     const recovered = await this.ensureRecovered(paseo);
     const handoffs: BatonHandoffInfo[] = [];
     const disabledAgentIds: string[] = [];
+    const writingAgentIds: string[] = [];
     for (const entry of this.entries.values()) {
       if (entry.status === "disabled") disabledAgentIds.push(entry.agentId);
+      if (entry.status === "writing") writingAgentIds.push(entry.agentId);
       if (entry.status === "done" && entry.path) {
         handoffs.push({
           agentId: entry.agentId,
@@ -278,7 +335,7 @@ export class BatonController {
       }
     }
     const ignoredWorkspaces = await this.ignoredWorkspaces(paseo, workspaceIds);
-    return { recovered, handoffs, disabledAgentIds, ignoredWorkspaces };
+    return { recovered, handoffs, disabledAgentIds, writingAgentIds, ignoredWorkspaces };
   }
 
   async readHandoff(pathToRead: string, paseo: PaseoApi): Promise<{ content: string }> {
