@@ -21,7 +21,7 @@ import {
   planRecovery,
 } from "./core";
 import { buildWriterHandoffPrompt, extractHandoffDocument, extractTitleFromDocument } from "./handoff";
-import { handoffPathFor, legacyStateFiles, resolveDaemonHome, resolveStateFile } from "./paths";
+import { handoffPathFor, resolveStateFile } from "./paths";
 import { loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
 
@@ -36,7 +36,6 @@ export interface BatonControllerDeps {
   io?: BatonStoreIo;
   now?: () => number;
   openFile?: (filePath: string) => Promise<void>;
-  home?: string;
 }
 
 function buildProviderModel(provider: string, model: string | null): string {
@@ -63,7 +62,6 @@ export class BatonController {
   private readonly now: () => number;
   private readonly openFile: (filePath: string) => Promise<void>;
   private readonly stateFile: string;
-  private readonly home: string;
   private paseo: PaseoApi | null = null;
   private entries = new Map<string, BatonEntry>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -86,35 +84,6 @@ export class BatonController {
     this.now = deps.now ?? Date.now;
     this.openFile = deps.openFile ?? openFileWithOs;
     this.stateFile = resolveStateFile(this.dataDir);
-    this.home = deps.home ?? resolveDaemonHome();
-  }
-
-  async migrateStateFileIfNeeded(): Promise<void> {
-    let hasNew = false;
-    try {
-      hasNew = await this.io.exists(this.stateFile);
-    } catch (error: unknown) {
-      this.log(`Checking state file failed: ${String(error)}`);
-    }
-    if (hasNew) return;
-    for (const legacy of legacyStateFiles(this.home)) {
-      if (legacy === this.stateFile) continue;
-      let hasLegacy = false;
-      try {
-        hasLegacy = await this.io.exists(legacy);
-      } catch (error: unknown) {
-        this.log(`Checking legacy state file failed: ${String(error)}`);
-      }
-      if (!hasLegacy) continue;
-      try {
-        await this.io.mkdir(path.dirname(this.stateFile));
-        await this.io.rename(legacy, this.stateFile);
-        this.log(`Migrated state file from ${legacy}`);
-        return;
-      } catch (error: unknown) {
-        this.log(`Migrating legacy state file failed: ${String(error)}`);
-      }
-    }
   }
 
   setPaseo(paseo: PaseoApi): void {
@@ -125,8 +94,7 @@ export class BatonController {
     this.setPaseo(paseo);
     if (this.recovered) return Promise.resolve(true);
     if (this.recoveryPromise) return this.recoveryPromise.then(() => this.recovered);
-    this.recoveryPromise = this.migrateStateFileIfNeeded()
-      .then(() => this.doRecover(paseo))
+    this.recoveryPromise = this.doRecover(paseo)
       .then(() => {
         this.recovered = true;
       })

@@ -10,23 +10,8 @@ export function resolveDataDir(home: string): string {
   return path.join(home, "plugin-data", "baton");
 }
 
-export function legacyDataDir(home: string): string {
-  return path.join(home, "paseo-baton");
-}
-
-export function legacyPluginDataDir(home: string): string {
-  return path.join(home, "plugin-data", "paseo-baton");
-}
-
 export function resolveStateFile(dataDir: string): string {
   return path.join(dataDir, "baton-state.json");
-}
-
-export function legacyStateFiles(home: string): string[] {
-  return [
-    path.join(legacyPluginDataDir(home), "baton-state.json"),
-    path.join(legacyDataDir(home), "baton-state.json"),
-  ];
 }
 
 export function handoffFileName(agentId: string): string {

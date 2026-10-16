@@ -109,7 +109,7 @@ function stubPaseo(opts: { createId?: string } = {}) {
   return { paseo, calls, created, archived };
 }
 
-const STATE_FILE = "/home/.paseo/paseo-baton/baton-state.json";
+const STATE_FILE = "/home/.paseo/plugin-data/baton/baton-state.json";
 
 function doneEntry() {
   return {
@@ -129,7 +129,7 @@ describe("BatonController", () => {
   it("creates a pending entry on turn_ended and persists it", async () => {
     const io = memoryIo();
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings(),
       log: () => {},
       io,
@@ -155,7 +155,7 @@ describe("BatonController", () => {
   it("drops the pending entry on turn_started", async () => {
     const io = memoryIo();
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings(),
       log: () => {},
       io,
@@ -171,7 +171,7 @@ describe("BatonController", () => {
 
   function makeController(io: ReturnType<typeof memoryIo>) {
     return new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings(),
       log: () => {},
       io,
@@ -200,7 +200,7 @@ describe("BatonController", () => {
 
   it("reports which workspaces are ignored by workspace or by project", async () => {
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings({
         idleDelayMinutes: 15,
         handoffProfileId: "",
@@ -276,7 +276,7 @@ describe("BatonController", () => {
       [HANDOFF_PATH]: "# Task\n\nFix the bug.\n\n# Current state\n\nAlmost there.",
     });
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings(),
       log: () => {},
       io,
@@ -301,7 +301,7 @@ describe("BatonController", () => {
   it("rejects continue when no handoff is done", async () => {
     const io = memoryIo();
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings(),
       log: () => {},
       io,
@@ -321,7 +321,7 @@ describe("BatonController", () => {
       [HANDOFF_PATH]: "# Task\n\nFix the bug.",
     });
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings(),
       log: () => {},
       io,
@@ -342,7 +342,7 @@ describe("BatonController", () => {
   it("schedules the handoff after the configured idle delay", async () => {
     const io = memoryIo();
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings({ idleDelayMinutes: 20, handoffProfileId: "", ignoredWorkspaceIds: [], ignoredProjectIds: [] }),
       log: () => {},
       io,
@@ -359,7 +359,7 @@ describe("BatonController", () => {
   it("does not schedule handoffs for subagents or ignored workspaces", async () => {
     const io = memoryIo();
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings({ idleDelayMinutes: 15, handoffProfileId: "", ignoredWorkspaceIds: ["wks-a"], ignoredProjectIds: [] }),
       log: () => {},
       io,
@@ -376,7 +376,7 @@ describe("BatonController", () => {
   it("does not schedule handoffs for ignored projects", async () => {
     const io = memoryIo();
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings({ idleDelayMinutes: 15, handoffProfileId: "", ignoredWorkspaceIds: [], ignoredProjectIds: ["proj-1"] }),
       log: () => {},
       io,
@@ -405,7 +405,7 @@ describe("BatonController", () => {
       }),
     });
     const controller = new BatonController({
-      dataDir: "/home/.paseo/paseo-baton",
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings({
         idleDelayMinutes: 15,
         handoffProfileId: "profile-1",
@@ -433,24 +433,4 @@ describe("BatonController", () => {
     expect(state["agent-a"].path).toContain("agent-a.md");
   });
 
-  it("migrates a legacy state file into the plugin data directory", async () => {
-    const legacyFile = "/home/.paseo/paseo-baton/baton-state.json";
-    const newFile = "/home/.paseo/plugin-data/baton/baton-state.json";
-    const io = memoryIo({ [legacyFile]: JSON.stringify({ "agent-a": doneEntry() }) });
-    const controller = new BatonController({
-      dataDir: "/home/.paseo/plugin-data/baton",
-      settings: settings(),
-      log: () => {},
-      io,
-      now: () => NOW,
-      home: "/home/.paseo",
-    });
-    const { paseo } = stubPaseo();
-    await controller.ensureRecovered(paseo as never);
-    expect(io.files.has(legacyFile)).toBe(false);
-    expect(io.files.has(newFile)).toBe(true);
-    const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(newFile) ?? "{}"));
-    expect(state["agent-a"].status).toBe("done");
-    await controller.dispose();
-  });
 });

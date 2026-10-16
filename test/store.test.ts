@@ -34,7 +34,7 @@ function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files:
   };
 }
 
-const STATE_FILE = "/home/.paseo/paseo-baton/baton-state.json";
+const STATE_FILE = "/home/.paseo/plugin-data/baton/baton-state.json";
 
 describe("loadState", () => {
   it("returns an empty state when the file is missing", async () => {
