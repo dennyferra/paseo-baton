@@ -198,6 +198,25 @@ describe("BatonController", () => {
     await controller.dispose();
   });
 
+  it("reports which workspaces are ignored by workspace or by project", async () => {
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/paseo-baton",
+      settings: settings({
+        idleDelayMinutes: 15,
+        handoffProfileId: "",
+        ignoredWorkspaceIds: ["wks-a"],
+        ignoredProjectIds: ["proj-1"],
+      }),
+      log: () => {},
+      io: memoryIo(),
+      now: () => NOW,
+    });
+    const { paseo } = stubPaseo();
+    const result = await controller.wake(paseo as never, ["wks-a", "wks-b"]);
+    expect(result.ignoredWorkspaces).toEqual({ "wks-a": "workspace", "wks-b": "project" });
+    await controller.dispose();
+  });
+
   it("refuses to disable once a handoff exists", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),

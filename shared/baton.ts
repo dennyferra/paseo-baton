@@ -121,11 +121,12 @@ export type HandoffInfo = z.infer<typeof handoffInfoSchema>;
 
 export const wakeRpc = defineRpc({
   name: "baton.wake",
-  input: z.object({}),
+  input: z.object({ workspaceIds: z.array(z.string()).default([]) }),
   output: z.object({
     recovered: z.boolean(),
     handoffs: z.array(handoffInfoSchema),
     disabledAgentIds: z.array(z.string()).default([]),
+    ignoredWorkspaces: z.record(z.string(), z.enum(["workspace", "project"])).default({}),
   }),
 });
 

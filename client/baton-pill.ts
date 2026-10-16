@@ -39,6 +39,7 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
   const infoByAgent = new Map<string, BatonHandoffInfo>();
   const tracked = new Map<string, TrackedAgent>();
   const disabled = new Set<string>();
+  let ignoredWorkspaces: Record<string, "workspace" | "project"> = {};
   const controller = new AbortController();
 
   function removePill(agentId: string): void {
@@ -58,9 +59,10 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
   function buildButton(agentId: string) {
     const info = infoByAgent.get(agentId);
     const isDisabled = disabled.has(agentId);
+    const ignoredBy = ignoredWorkspaces[tracked.get(agentId)?.workspaceId ?? ""];
     return {
       title: "Baton",
-      icon: isDisabled ? ("Pause" as const) : ("Play" as const),
+      icon: isDisabled || ignoredBy ? ("Pause" as const) : ("Play" as const),
       label: "Baton",
       behavior: {
         kind: "menu" as const,
@@ -86,25 +88,34 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
               },
             },
           },
-          {
-            kind: "item" as const,
-            id: "toggle",
-            title: isDisabled ? "Turn on handoff for this session" : "Turn off handoff for this session",
-            icon: isDisabled ? ("Play" as const) : ("Pause" as const),
-            // Once a handoff exists there is nothing left to turn off.
-            disabled: !isDisabled && Boolean(info),
-            behavior: {
-              kind: "action" as const,
-              onPress(): void {
-                void client
-                  .rpc(setEnabledRpc, { agentId, enabled: isDisabled })
-                  .then(() => refresh())
-                  .catch((error: unknown) => {
-                    console.error(`[baton] toggle failed: ${String(error)}`);
-                  });
+          ignoredBy
+            ? {
+                kind: "item" as const,
+                id: "ignored",
+                title: `Handoff is off: this ${ignoredBy} is ignored in Baton settings`,
+                icon: "Pause" as const,
+                disabled: true,
+                behavior: { kind: "action" as const, onPress(): void {} },
+              }
+            : {
+                kind: "item" as const,
+                id: "toggle",
+                title: isDisabled ? "Turn on handoff for this session" : "Turn off handoff for this session",
+                icon: isDisabled ? ("Play" as const) : ("Pause" as const),
+                // Once a handoff exists there is nothing left to turn off.
+                disabled: !isDisabled && Boolean(info),
+                behavior: {
+                  kind: "action" as const,
+                  onPress(): void {
+                    void client
+                      .rpc(setEnabledRpc, { agentId, enabled: isDisabled })
+                      .then(() => refresh())
+                      .catch((error: unknown) => {
+                        console.error(`[baton] toggle failed: ${String(error)}`);
+                      });
+                  },
+                },
               },
-            },
-          },
         ],
       },
     };
@@ -135,8 +146,9 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
   function refresh(): Promise<void> {
     if (refreshing) return refreshing;
     refreshing = client
-      .rpc(wakeRpc, {})
-      .then(({ handoffs, disabledAgentIds }) => {
+      .rpc(wakeRpc, { workspaceIds: [...new Set([...tracked.values()].map((agent) => agent.workspaceId))] })
+      .then(({ handoffs, disabledAgentIds, ignoredWorkspaces: ignored }) => {
+        ignoredWorkspaces = ignored;
         const ready = new Map(handoffs.map((info) => [info.agentId, info]));
         disabled.clear();
         for (const id of disabledAgentIds) disabled.add(id);

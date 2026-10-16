@@ -279,7 +279,13 @@ export class BatonController {
 
   async wake(
     paseo: PaseoApi,
-  ): Promise<{ recovered: boolean; handoffs: BatonHandoffInfo[]; disabledAgentIds: string[] }> {
+    workspaceIds: readonly string[] = [],
+  ): Promise<{
+    recovered: boolean;
+    handoffs: BatonHandoffInfo[];
+    disabledAgentIds: string[];
+    ignoredWorkspaces: Record<string, "workspace" | "project">;
+  }> {
     this.setPaseo(paseo);
     const recovered = await this.ensureRecovered(paseo);
     const handoffs: BatonHandoffInfo[] = [];
@@ -295,7 +301,8 @@ export class BatonController {
         });
       }
     }
-    return { recovered, handoffs, disabledAgentIds };
+    const ignoredWorkspaces = await this.ignoredWorkspaces(paseo, workspaceIds);
+    return { recovered, handoffs, disabledAgentIds, ignoredWorkspaces };
   }
 
   async readHandoff(pathToRead: string, paseo: PaseoApi): Promise<{ content: string }> {
@@ -310,6 +317,24 @@ export class BatonController {
     } catch {
       throw new Error("The handoff file is missing.");
     }
+  }
+
+  private async ignoredWorkspaces(
+    paseo: PaseoApi,
+    workspaceIds: readonly string[],
+  ): Promise<Record<string, "workspace" | "project">> {
+    const ignored: Record<string, "workspace" | "project"> = {};
+    if (workspaceIds.length === 0) return ignored;
+    const settings = await this.readSettings();
+    for (const workspaceId of new Set(workspaceIds)) {
+      if (settings.ignoredWorkspaceIds.includes(workspaceId)) {
+        ignored[workspaceId] = "workspace";
+      } else if (settings.ignoredProjectIds.length > 0) {
+        const projectId = await this.workspaceProjectId(paseo, workspaceId);
+        if (projectId && settings.ignoredProjectIds.includes(projectId)) ignored[workspaceId] = "project";
+      }
+    }
+    return ignored;
   }
 
   async openHandoff(pathToOpen: string, paseo: PaseoApi): Promise<{ opened: boolean }> {

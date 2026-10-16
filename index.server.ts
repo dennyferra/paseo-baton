@@ -42,12 +42,12 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(setEnabledRpc, (input, context) => controller.setEnabled(input, context.paseo));
 
-  server.handle(wakeRpc, async (_input, context) => {
+  server.handle(wakeRpc, async (input, context) => {
     try {
-      return await controller.wake(context.paseo);
+      return await controller.wake(context.paseo, input.workspaceIds);
     } catch (error: unknown) {
       console.error(`[baton] wake failed: ${String(error)}`);
-      return { recovered: false, handoffs: [], disabledAgentIds: [] };
+      return { recovered: false, handoffs: [], disabledAgentIds: [], ignoredWorkspaces: {} };
     }
   });
 

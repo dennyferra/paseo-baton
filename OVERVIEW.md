@@ -23,7 +23,8 @@ chip in the composer that opens a menu:
   titled `[Handoff] <task>` with the prompt to read the file and continue the task. The row updates
   to show which agent continued.
 - **Turn off / Turn on handoff for this session** stops Baton from writing a handoff for that agent.
-  The state is saved, so it survives restarts. Turning off is disabled once a handoff exists.
+  The state is saved, so it survives restarts. Turning off is disabled once a handoff exists. In an ignored workspace or project the menu shows
+  a disabled note saying so instead of the toggle.
 
 If you keep working in the original session after a handoff was saved and nobody continued it, Baton
 deletes the stale handoff file. A handoff that was already continued in a new agent is kept. The
