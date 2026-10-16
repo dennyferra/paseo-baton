@@ -52,6 +52,21 @@ Settings live under Settings -> Plugins -> Baton.
   project. Ignoring a project covers all its workspaces, including ones created later; ignoring a
   workspace covers just that one. Ignored agents never produce handoffs.
 
+## Data
+
+Writing a handoff sends part of the conversation to an agent provider. The writer agent receives a
+draft built from the conversation Paseo reports when a turn ends: the last 30 messages (each cut at
+2,000 characters), the files the agent touched, and a short list of its tool calls with their targets,
+such as file paths and URLs. Tool output is not included. The writer runs on the provider and model of the profile you pick, or on the idle agent's
+own provider and model by default, so that provider sees this text. If the writer fails, the
+fallback summary is built locally and nothing is sent.
+
+Handoff files stay on the machine that runs the Paseo daemon, in `.paseo/handoffs` inside each
+workspace or in the storage location you set. They contain a summary of the conversation, so keep
+that folder out of version control if the work is private. Baton's own state file is in
+`~/.paseo/plugin-data/baton`. Baton makes no network requests and never reads credentials. The "Open
+in default app" button hands the file to your operating system's opener.
+
 ## Capabilities and limits
 
 Entries persist in a JSON file under the daemon home, so a daemon restart recovers pending handoffs,
@@ -59,4 +74,4 @@ skips expired ones, and re-appends chat rows for saved handoffs. A handoff is wr
 per idle period. Subagent tool calls are not handed off because they are provider child sessions
 rather than agents. Done entries are pruned when the agent is archived or after 7 days. Chat rows
 live in daemon memory and are restored after a daemon restart. Baton reads agent lifecycle events
-and writes handoff files and its own state file; it never reads credentials and never logs secrets.
+and writes handoff files and its own state file, and never logs secrets.
