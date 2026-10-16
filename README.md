@@ -8,6 +8,10 @@ model, without re-reading the whole conversation.
 
 ![The Handoff saved row in an agent's chat](assets/handoff-saved.png)
 
+The Baton chip in the composer:
+
+![The Baton chip](assets/baton-chip.png)
+
 ## Features
 
 - **Automatic handoffs.** After an agent has been idle for a set time, Baton writes
