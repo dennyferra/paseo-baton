@@ -137,6 +137,26 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         marginTop: 12,
         marginBottom: 6,
       },
+      saveBar: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        justifyContent: "space-between" as const,
+        gap: 12,
+        paddingVertical: 10,
+        backgroundColor: theme.colors.surface0,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border,
+      },
+      saveBarStatus: {
+        flex: 1,
+        fontSize: layout.compact ? 13 : 14,
+      },
+      saveBarButton: {
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        backgroundColor: theme.colors.accent,
+      },
       save: {
         marginTop: layout.compact ? 8 : 12,
         padding: 12,
@@ -210,8 +230,26 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     }
   };
 
+  const dirty = settings.status === "ready" && JSON.stringify(draft) !== JSON.stringify(settings.values);
+
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 24 }}>
+    <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 24 }} stickyHeaderIndices={[0]}>
+      <View style={styles.saveBar}>
+        <Text
+          style={[styles.saveBarStatus, { color: dirty ? theme.colors.statusWarning : theme.colors.foregroundMuted }]}
+        >
+          {dirty ? "You have unsaved changes" : "All changes saved"}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Save baton settings"
+          onPress={() => void onSave()}
+          disabled={settings.saving || !dirty}
+          style={[styles.saveBarButton, { opacity: settings.saving || !dirty ? 0.5 : 1 }]}
+        >
+          <Text style={styles.saveText}>{settings.saving ? "Saving..." : "Save"}</Text>
+        </Pressable>
+      </View>
       <Text style={styles.sectionTitle}>When to write a handoff</Text>
       <SettingsCard>
         <SettingsInput
