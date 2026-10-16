@@ -9,7 +9,7 @@ model, without re-reading the whole conversation.
 ## Features
 
 - **Automatic handoffs.** After an agent has been idle for a set time, Baton writes
-  `.paseo/handoffs/<agentId>.md` in the agent's workspace (Task, Context, Relevant files, Current
+  `<agentId>.md` to `.paseo/handoffs` in the agent's workspace (or your custom location) (Task, Context, Relevant files, Current
   state, What was tried, Decisions, Acceptance criteria, Constraints).
 - **Hidden writer.** A dedicated `[Handoff writer]` agent drafts the document and is archived after
   its turn, so the idle agent's chat only gains a "Handoff saved" row. If the writer fails, Baton
@@ -47,6 +47,7 @@ Under Settings -> Plugins -> Baton:
 | --- | --- | --- |
 | Idle delay | 15 min (1-240) | How long an agent sits idle before a handoff is written. Independent of any provider's prompt cache. |
 | Agent profile | Same as running agent | Which of your Paseo agent profiles writes the handoff. Its provider, model and effort are used; its mode is ignored. |
+| Storage location | `.paseo/handoffs` in each workspace | Where handoff files are saved. Accepts an absolute path, `~/...`, or a path relative to the workspace. |
 | Ignored projects and workspaces | none | Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers workspaces created later. |
 
 ## How it works

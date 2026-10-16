@@ -38,14 +38,15 @@ function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files:
   };
 }
 
-function settings(
-  values: BatonSettings = {
+function settings(overrides: Partial<BatonSettings> = {}) {
+  const values: BatonSettings = {
     idleDelayMinutes: 15,
     handoffProfileId: "",
+    handoffDirectory: "",
     ignoredWorkspaceIds: [],
     ignoredProjectIds: [],
-  },
-) {
+    ...overrides,
+  };
   return {
     read: async () => ({ status: "ready" as const, revision: "r", values }),
     subscribe: () => () => {},
@@ -387,6 +388,45 @@ describe("BatonController", () => {
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
     expect(Object.keys(state)).toEqual([]);
+  });
+
+  it("saves the handoff in the custom directory from settings", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({
+        "agent-a": {
+          agentId: "agent-a",
+          workspaceId: "wks-a",
+          cwd: "/work",
+          idleSince: NOW - 60_000,
+          fireAt: NOW,
+          deadline: NOW + 60_000,
+          updatedAt: NOW - 60_000,
+          status: "pending",
+        },
+      }),
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings({ handoffDirectory: "/shared/handoffs" }),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo, calls } = stubPaseo({ createId: "writer-1" });
+    await controller.ensureRecovered(paseo as never);
+    for (let tries = 0; tries < 50 && !calls.includes("create:wks-a"); tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await controller.onTurnEnded(
+      { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
+      [{ type: "assistant_message", text: "# Task\nShip it" }],
+      paseo as never,
+    );
+    expect(io.files.get("/shared/handoffs/agent-a.md")).toContain("# Task\nShip it");
+    expect(io.files.has(HANDOFF_PATH)).toBe(false);
+    await controller.dispose();
+    const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+    expect(state["agent-a"].path).toBe("/shared/handoffs/agent-a.md");
   });
 
   it("spawns a handoff writer from the configured profile (provider, model, effort; no mode) and finalizes from its turn", async () => {

@@ -10,8 +10,8 @@ or hand a task to a different model.
 ## How it works
 
 When an agent turn ends, Baton starts an idle timer. If no new turn starts before it fires, a
-short-lived writer agent drafts the handoff, and Baton saves it to `.paseo/handoffs/<agentId>.md` in its
-workspace, using the template Task, Context, Relevant files, Current state, What was tried,
+short-lived writer agent drafts the handoff, and Baton saves it as `<agentId>.md` in `.paseo/handoffs` in its
+workspace (or your configured storage location), using the template Task, Context, Relevant files, Current state, What was tried,
 Decisions, Acceptance criteria, and Constraints. If the agent cannot answer, Baton writes a
 mechanical handoff from the conversation snapshot instead, with no model call.
 
@@ -45,6 +45,9 @@ Settings live under Settings -> Plugins -> Baton.
   model and effort are used; its mode is ignored. The writer never needs file access: it replies with the document and Baton writes the file. The default,
   "Same as running agent", uses the idle agent's own model and effort. The writer is a short-lived
   dedicated agent archived after its turn, so the idle agent's chat only shows the Handoff saved row.
+- **Storage location** (`handoffDirectory`, default empty): where handoff files are saved. Empty means
+  `.paseo/handoffs` inside each workspace. A custom value can be an absolute path, `~/...`, or a path
+  relative to the workspace. Files are named `<agentId>.md`. Existing handoffs keep their saved path.
 - **Ignored projects and workspaces** (`ignoredProjectIds`, `ignoredWorkspaceIds`): switches grouped by
   project. Ignoring a project covers all its workspaces, including ones created later; ignoring a
   workspace covers just that one. Ignored agents never produce handoffs.

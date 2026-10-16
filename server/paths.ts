@@ -18,10 +18,19 @@ export function handoffFileName(agentId: string): string {
   return `${agentId}.md`;
 }
 
-export function handoffDirFor(workspaceDir: string): string {
-  return path.join(workspaceDir, HANDOFF_REL_DIR);
+/**
+ * Where handoffs for a workspace go: `<workspace>/.paseo/handoffs` by default, or the user's custom
+ * directory. A custom path may start with `~`, be absolute, or be relative to the workspace.
+ */
+export function handoffDirFor(workspaceDir: string, customDir = ""): string {
+  const custom = customDir.trim();
+  if (!custom) return path.join(workspaceDir, HANDOFF_REL_DIR);
+  if (custom === "~" || custom.startsWith("~/") || custom.startsWith("~\\")) {
+    return path.join(os.homedir(), custom.slice(1));
+  }
+  return path.resolve(workspaceDir, custom);
 }
 
-export function handoffPathFor(workspaceDir: string, agentId: string): string {
-  return path.join(handoffDirFor(workspaceDir), handoffFileName(agentId));
+export function handoffPathFor(workspaceDir: string, agentId: string, customDir = ""): string {
+  return path.join(handoffDirFor(workspaceDir, customDir), handoffFileName(agentId));
 }

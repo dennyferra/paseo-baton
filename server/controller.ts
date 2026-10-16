@@ -722,8 +722,10 @@ export class BatonController {
   }
 
   private async pathForEntry(entry: BatonEntry, paseo: PaseoApi): Promise<string | null> {
+    if (entry.status === "done" && entry.path) return entry.path;
     const cwd = entry.cwd || (await this.resolveWorkspaceDir(entry.workspaceId, paseo));
-    return cwd ? handoffPathFor(cwd, entry.agentId) : null;
+    if (!cwd) return null;
+    return handoffPathFor(cwd, entry.agentId, (await this.readSettings()).handoffDirectory);
   }
 
   private async resolveWorkspaceDir(workspaceId: string, paseo: PaseoApi): Promise<string | null> {

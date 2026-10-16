@@ -243,6 +243,16 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
           );
         })}
       </SettingsCard>
+      <Text style={styles.sectionTitle}>Handoff files</Text>
+      <SettingsCard>
+        <SettingsInput
+          label="Storage location"
+          hint="Where handoff files are saved. Leave empty for the default, .paseo/handoffs inside each workspace. Use an absolute path, ~/..., or a path relative to the workspace."
+          placeholder=".paseo/handoffs"
+          initialValue={draft.handoffDirectory}
+          onChangeText={(value) => update({ handoffDirectory: value })}
+        />
+      </SettingsCard>
       <Text style={styles.sectionTitle}>Ignored projects and workspaces</Text>
       <Text style={[styles.hint, { marginBottom: 8 }]}>
         Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers all of its
