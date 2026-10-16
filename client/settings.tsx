@@ -252,6 +252,12 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
           initialValue={draft.handoffDirectory}
           onChangeText={(value) => update({ handoffDirectory: value })}
         />
+        <SettingsSwitch
+          label="Delete unused handoffs when a session resumes"
+          hint="If you keep working in the original session and nobody continued the handoff, delete its file. Turn off to keep every file."
+          value={draft.deleteStaleHandoffs}
+          onValueChange={(value) => update({ deleteStaleHandoffs: value })}
+        />
       </SettingsCard>
       <Text style={styles.sectionTitle}>Ignored projects and workspaces</Text>
       <Text style={[styles.hint, { marginBottom: 8 }]}>

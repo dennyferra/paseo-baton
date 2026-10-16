@@ -27,8 +27,8 @@ chip in the composer that opens a menu:
   a disabled note saying so instead of the toggle.
 
 If you keep working in the original session after a handoff was saved and nobody continued it, Baton
-deletes the stale handoff file. A handoff that was already continued in a new agent is kept. The
-"Handoff saved" row stays in the chat history, but its link then says the handoff is no longer available.
+deletes the stale handoff file by default; a setting turns this off. A handoff that was already continued in a new agent is kept. The
+"Handoff saved" row stays in the chat history, but its link then says the handoff can no longer be opened.
 
 ## Setup
 
@@ -48,6 +48,9 @@ Settings live under Settings -> Plugins -> Baton.
 - **Storage location** (`handoffDirectory`, default empty): where handoff files are saved. Empty means
   `.paseo/handoffs` inside each workspace. A custom value can be an absolute path, `~/...`, or a path
   relative to the workspace. Files are named `<agentId>.md`. Existing handoffs keep their saved path.
+- **Delete unused handoffs when a session resumes** (`deleteStaleHandoffs`, default on): removes a
+  handoff file that nobody continued once you keep working in the original session. Turn it off to
+  keep every file. The chat row can then no longer open it, but the file stays on disk.
 - **Ignored projects and workspaces** (`ignoredProjectIds`, `ignoredWorkspaceIds`): switches grouped by
   project. Ignoring a project covers all its workspaces, including ones created later; ignoring a
   workspace covers just that one. Ignored agents never produce handoffs.

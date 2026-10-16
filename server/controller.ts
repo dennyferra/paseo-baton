@@ -144,9 +144,16 @@ export class BatonController {
     this.persistEntries();
     // The user kept working in this session, so a handoff nobody continued is stale.
     if (entry.status === "done" && entry.path && !entry.continuedAgentId) {
-      void this.io.unlink(entry.path).catch((error: unknown) => {
-        this.log(`Removing stale handoff ${entry.path} failed: ${String(error)}`);
-      });
+      void this.removeStaleHandoff(entry.path);
+    }
+  }
+
+  private async removeStaleHandoff(handoffPath: string): Promise<void> {
+    try {
+      if (!(await this.readSettings()).deleteStaleHandoffs) return;
+      await this.io.unlink(handoffPath);
+    } catch (error: unknown) {
+      this.log(`Removing stale handoff ${handoffPath} failed: ${String(error)}`);
     }
   }
 
@@ -279,7 +286,7 @@ export class BatonController {
     const entry = [...this.entries.values()].find(
       (candidate) => candidate.status === "done" && candidate.path === pathToRead,
     );
-    if (!entry) throw new Error("This handoff is no longer available, the session was continued after it was saved.");
+    if (!entry) throw new Error("This handoff can no longer be opened here because the session was continued after it was saved. The file may still be on disk.");
     try {
       return { content: await this.io.readFile(pathToRead) };
     } catch {

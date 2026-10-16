@@ -32,7 +32,8 @@ Its menu once a handoff exists, with turning handoffs off disabled:
   - **Turn off / Turn on handoff for this session** pauses Baton for one agent. It is saved across
     restarts and disabled once a handoff exists. In an ignored workspace or project the menu says so.
 - **Stale handoff cleanup.** If you keep working in the original session and nobody continued the
-  handoff, Baton deletes the stale file. Continued handoffs are kept.
+  handoff, Baton deletes the stale file by default. Continued handoffs are kept, and a setting turns
+  deletion off.
 
 ## Install
 
@@ -58,6 +59,7 @@ Under Settings -> Plugins -> Baton:
 | Idle delay | 15 min (1-240) | How long an agent sits idle before a handoff is written. Independent of any provider's prompt cache. |
 | Agent profile | Same as running agent | Which of your Paseo agent profiles writes the handoff. Its provider, model and effort are used; its mode is ignored. |
 | Storage location | `.paseo/handoffs` in each workspace | Where handoff files are saved. Accepts an absolute path, `~/...`, or a path relative to the workspace. |
+| Delete unused handoffs | On | Deletes a handoff nobody continued once you keep working in the original session. Off keeps every file on disk. |
 | Ignored projects and workspaces | none | Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers workspaces created later. |
 
 ## Keep handoffs out of version control
@@ -108,7 +110,7 @@ Server code must not import client code, and the reverse.
 - Paseo gives plugins no way to open a file in the host's own file tab, so Baton renders the
   handoff itself. It supports headings, lists, quotes, code blocks, tables and basic inline styles.
 - Chat rows can't be removed, so the "Handoff saved" row stays after a handoff is cleaned up and its
-  link then reports the handoff is no longer available.
+  link then reports the handoff can no longer be opened.
 - The Baton chip's state refreshes when an agent's status changes, so a menu left open can be stale
   after you change settings.
 

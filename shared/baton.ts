@@ -47,6 +47,7 @@ export const batonSettingsSchema = z.object({
   idleDelayMinutes: z.number().int().min(1).max(240).default(DEFAULT_IDLE_DELAY_MINUTES),
   handoffProfileId: z.string().trim().max(200).default(""),
   handoffDirectory: z.string().trim().max(500).default(""),
+  deleteStaleHandoffs: z.boolean().default(true),
   ignoredWorkspaceIds: z.array(z.string()).default([]),
   ignoredProjectIds: z.array(z.string()).default([]),
 });
@@ -57,7 +58,7 @@ export const DEFAULT_SETTINGS: BatonSettings = batonSettingsSchema.parse({});
 export const batonSettings = defineSettings({
   id: "baton",
   scope: "host",
-  version: 6,
+  version: 7,
   schema: batonSettingsSchema,
   migrate: (values) => {
     const old = values && typeof values === "object" ? (values as Record<string, unknown>) : {};
@@ -65,6 +66,7 @@ export const batonSettings = defineSettings({
       ...DEFAULT_SETTINGS,
       ...(typeof old.idleDelayMinutes === "number" ? { idleDelayMinutes: old.idleDelayMinutes } : {}),
       ...(typeof old.handoffProfileId === "string" ? { handoffProfileId: old.handoffProfileId } : {}),
+      ...(typeof old.deleteStaleHandoffs === "boolean" ? { deleteStaleHandoffs: old.deleteStaleHandoffs } : {}),
       ...(typeof old.handoffDirectory === "string" ? { handoffDirectory: old.handoffDirectory } : {}),
       ...(Array.isArray(old.ignoredWorkspaceIds) ? { ignoredWorkspaceIds: old.ignoredWorkspaceIds } : {}),
     };

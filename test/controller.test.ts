@@ -43,6 +43,7 @@ function settings(overrides: Partial<BatonSettings> = {}) {
     idleDelayMinutes: 15,
     handoffProfileId: "",
     handoffDirectory: "",
+    deleteStaleHandoffs: true,
     ignoredWorkspaceIds: [],
     ignoredProjectIds: [],
     ...overrides,
@@ -253,7 +254,27 @@ describe("BatonController", () => {
     const controller = makeController(io);
     const { paseo } = stubPaseo();
     expect(await controller.readHandoff(HANDOFF_PATH, paseo as never)).toEqual({ content: "# Task\n\nReview me" });
-    await expect(controller.readHandoff("/etc/passwd", paseo as never)).rejects.toThrow("no longer available");
+    await expect(controller.readHandoff("/etc/passwd", paseo as never)).rejects.toThrow("can no longer be opened");
+    await controller.dispose();
+  });
+
+  it("keeps an uncontinued handoff on disk when deleting stale handoffs is off", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\n\nx",
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings({ deleteStaleHandoffs: false }),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo } = stubPaseo();
+    await controller.ensureRecovered(paseo as never);
+    controller.onTurnStarted({ id: "agent-a" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(io.files.has(HANDOFF_PATH)).toBe(true);
     await controller.dispose();
   });
 
