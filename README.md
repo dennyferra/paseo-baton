@@ -60,6 +60,18 @@ Under Settings -> Plugins -> Baton:
 | Storage location | `.paseo/handoffs` in each workspace | Where handoff files are saved. Accepts an absolute path, `~/...`, or a path relative to the workspace. |
 | Ignored projects and workspaces | none | Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers workspaces created later. |
 
+## Keep handoffs out of version control
+
+Handoff files contain excerpts of your conversations: your messages, the agent's replies, file paths
+and tool calls. The default location, `.paseo/handoffs` inside each workspace, is usually inside a git
+repository, so add it to that repository's `.gitignore`:
+
+```gitignore
+.paseo/handoffs/
+```
+
+Or set a storage location outside your repositories in the plugin settings, such as `~/handoffs`.
+
 ## How it works
 
 Baton listens to agent lifecycle events. When a turn ends it starts an idle timer, and a new turn

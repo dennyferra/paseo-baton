@@ -247,7 +247,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       <SettingsCard>
         <SettingsInput
           label="Storage location"
-          hint="Where handoff files are saved. Leave empty for the default, .paseo/handoffs inside each workspace. Use an absolute path, ~/..., or a path relative to the workspace."
+          hint="Where handoff files are saved. Leave empty for the default, .paseo/handoffs inside each workspace. Use an absolute path, ~/..., or a path relative to the workspace. Handoffs contain excerpts of your conversations, so add this folder to .gitignore if it is inside a git repository."
           placeholder=".paseo/handoffs"
           initialValue={draft.handoffDirectory}
           onChangeText={(value) => update({ handoffDirectory: value })}
