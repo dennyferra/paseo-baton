@@ -48,6 +48,8 @@ Settings live under Settings -> Plugins -> Baton.
 - **Storage location** (`handoffDirectory`, default empty): where handoff files are saved. Empty means
   `.paseo/handoffs` inside each workspace. A custom value can be an absolute path, `~/...`, or a path
   relative to the workspace. Files are named `<agentId>.md`. Existing handoffs keep their saved path.
+  If the location can't be used, Baton saves to the default folder instead and the "Handoff saved" row
+  says why.
 - **Delete unused handoffs when a session resumes** (`deleteStaleHandoffs`, default on): removes a
   handoff file that nobody continued once you keep working in the original session. Turn it off to
   keep every file. The chat row can then no longer open it, but the file stays on disk.

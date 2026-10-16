@@ -26,7 +26,7 @@ import { loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
 
 type AgentStatus = NonNullable<PaseoAgent["status"]>;
-type RowData = { agentId: string; path: string; continuedAgentId?: string };
+type RowData = { agentId: string; path: string; continuedAgentId?: string; notice?: string };
 type BatonHandoffInfo = HandoffInfo;
 
 export interface BatonControllerDeps {
@@ -70,6 +70,7 @@ export class BatonController {
   private lastTimeline = new Map<string, readonly AgentTimelineItem[]>();
   private workspaceDirCache = new Map<string, string | null>();
   private writerAgentIds = new Set<string>();
+  private pathNotices = new Map<string, string>();
   private writerByAgentId = new Map<string, string>();
   private recoveryPromise: Promise<void> | null = null;
   private recovered = false;
@@ -732,7 +733,23 @@ export class BatonController {
     if (entry.status === "done" && entry.path) return entry.path;
     const cwd = entry.cwd || (await this.resolveWorkspaceDir(entry.workspaceId, paseo));
     if (!cwd) return null;
-    return handoffPathFor(cwd, entry.agentId, (await this.readSettings()).handoffDirectory);
+    const custom = (await this.readSettings()).handoffDirectory;
+    const chosen = handoffPathFor(cwd, entry.agentId, custom);
+    if (!custom.trim()) return chosen;
+    try {
+      await this.io.mkdir(dirname(chosen));
+      this.pathNotices.delete(entry.agentId);
+      return chosen;
+    } catch (error: unknown) {
+      // An unusable custom location must not lose the handoff; use the default folder and say so.
+      this.log(`Storage location ${custom} is not usable: ${String(error)}`);
+      const reason = error instanceof Error ? error.message : String(error);
+      this.pathNotices.set(
+        entry.agentId,
+        `Saved to the default folder because the storage location "${custom}" could not be used: ${reason}`,
+      );
+      return handoffPathFor(cwd, entry.agentId);
+    }
   }
 
   private async resolveWorkspaceDir(workspaceId: string, paseo: PaseoApi): Promise<string | null> {
@@ -756,6 +773,9 @@ export class BatonController {
     // One row per handoff: idleSince is stable for the entry's life, so continuing updates the row in
     // place, while a later handoff for the same agent gets its own row instead of reusing the old one.
     const rowKey = this.entries.get(agentId)?.idleSince ?? 0;
+    const notice = this.pathNotices.get(agentId);
+    if (notice) data = { ...data, notice };
+    this.pathNotices.delete(agentId);
     try {
       await paseo.agents.ref(agentId).timeline.append({
         type: "plugin",

@@ -58,6 +58,7 @@ function stubPaseo(opts: { createId?: string } = {}) {
   const createId = opts.createId ?? "agent-continued";
   const calls: string[] = [];
   const created: Array<Record<string, unknown>> = [];
+  const appended: Array<Record<string, unknown>> = [];
   const archived: string[] = [];
   const agents: Array<{ id: string; status: string; provider: string; model: string | null; workspaceId: string }> = [
     { id: "agent-a", status: "idle", provider: "claude", model: "claude-sonnet-5-5", workspaceId: "wks-a" },
@@ -79,8 +80,9 @@ function stubPaseo(opts: { createId?: string } = {}) {
           return { archivedAt: new Date().toISOString() };
         },
         timeline: {
-          append: async () => {
+          append: async (item: Record<string, unknown>) => {
             calls.push(`append:${agentId}`);
+            appended.push(item);
             return { seq: 1, epoch: "e" };
           },
         },
@@ -108,7 +110,7 @@ function stubPaseo(opts: { createId?: string } = {}) {
       }),
     },
   };
-  return { paseo, calls, created, archived };
+  return { paseo, calls, created, archived, appended };
 }
 
 const STATE_FILE = "/home/.paseo/plugin-data/baton/baton-state.json";
@@ -448,6 +450,51 @@ describe("BatonController", () => {
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
     expect(state["agent-a"].path).toBe("/shared/handoffs/agent-a.md");
+  });
+
+  it("falls back to the default folder and says so when the storage location is unusable", async () => {
+    const base = memoryIo({
+      [STATE_FILE]: JSON.stringify({
+        "agent-a": {
+          agentId: "agent-a",
+          workspaceId: "wks-a",
+          cwd: "/work",
+          idleSince: NOW - 60_000,
+          fireAt: NOW,
+          deadline: NOW + 60_000,
+          updatedAt: NOW - 60_000,
+          status: "pending",
+        },
+      }),
+    });
+    const io = {
+      ...base,
+      async mkdir(dir: string) {
+        if (dir.startsWith("/bad")) throw new Error("EACCES: permission denied");
+      },
+    };
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings({ handoffDirectory: "/bad/handoffs" }),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo, calls, appended } = stubPaseo({ createId: "writer-1" });
+    await controller.ensureRecovered(paseo as never);
+    for (let tries = 0; tries < 50 && !calls.includes("create:wks-a"); tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await controller.onTurnEnded(
+      { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
+      [{ type: "assistant_message", text: "# Task\nShip it" }],
+      paseo as never,
+    );
+    expect(base.files.get(HANDOFF_PATH)).toContain("# Task\nShip it");
+    const row = appended.find((item) => item.kind === "baton-ready");
+    expect((row?.data as { notice?: string }).notice).toContain("EACCES: permission denied");
+    expect((row?.data as { path: string }).path).toBe(HANDOFF_PATH);
+    await controller.dispose();
   });
 
   it("spawns a handoff writer from the configured profile (provider, model, effort; no mode) and finalizes from its turn", async () => {

@@ -35,6 +35,10 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
         fontSize: layout.compact ? 12 : 13,
         textDecorationLine: "underline" as const,
       },
+      warning: {
+        color: theme.colors.statusWarning,
+        fontSize: layout.compact ? 12 : 13,
+      },
       hint: {
         color: theme.colors.foregroundMuted,
         fontSize: layout.compact ? 12 : 13,
@@ -59,6 +63,7 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
           {data.path}
         </Text>
       </Pressable>
+      {data.notice ? <Text style={styles.warning}>{data.notice}</Text> : null}
       {data.continuedAgentId ? (
         <Text style={styles.hint}>Continued in agent {data.continuedAgentId}</Text>
       ) : (

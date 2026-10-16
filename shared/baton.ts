@@ -80,6 +80,7 @@ export const batonRowSchema = z.object({
   agentId: z.string(),
   path: z.string(),
   continuedAgentId: z.string().optional(),
+  notice: z.string().optional(),
 });
 export type BatonRowData = z.infer<typeof batonRowSchema>;
 
