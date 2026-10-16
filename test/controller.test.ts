@@ -418,6 +418,10 @@ describe("BatonController", () => {
     });
     const { paseo, calls, archived, created } = stubPaseo({ createId: "writer-1" });
     await controller.ensureRecovered(paseo as never);
+    // Recovery fires the handoff in the background; the writer only ends its turn after it exists.
+    for (let tries = 0; tries < 50 && !calls.includes("create:wks-a"); tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
     await controller.onTurnEnded(
       { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
       [{ type: "assistant_message", text: "# Task\nShip it\n\n# Context\nDone so far" }],
