@@ -18,6 +18,7 @@ export const batonEntrySchema = z.object({
   status: BATON_STATUS,
   path: z.string().optional(),
   continuedAgentId: z.string().optional(),
+  continuedTitle: z.string().optional(),
 });
 export type BatonEntry = z.infer<typeof batonEntrySchema>;
 
@@ -80,6 +81,7 @@ export const batonRowSchema = z.object({
   agentId: z.string(),
   path: z.string(),
   continuedAgentId: z.string().optional(),
+  continuedTitle: z.string().optional(),
   notice: z.string().optional(),
 });
 export type BatonRowData = z.infer<typeof batonRowSchema>;
@@ -94,6 +96,12 @@ export const continueHandoffRpc = defineRpc({
     agentId: z.string(),
     title: z.string(),
   }),
+});
+
+export const archiveAgentRpc = defineRpc({
+  name: "baton.archive",
+  input: z.object({ agentId: z.string() }),
+  output: z.object({ archived: z.boolean() }),
 });
 
 export const openHandoffRpc = defineRpc({

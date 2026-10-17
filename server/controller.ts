@@ -26,7 +26,7 @@ import { loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
 
 type AgentStatus = NonNullable<PaseoAgent["status"]>;
-type RowData = { agentId: string; path: string; continuedAgentId?: string; notice?: string };
+type RowData = { agentId: string; path: string; continuedAgentId?: string; continuedTitle?: string; notice?: string };
 type BatonHandoffInfo = HandoffInfo;
 
 export interface BatonControllerDeps {
@@ -296,7 +296,7 @@ export class BatonController {
       prompt: `Read ${entry.path} and continue the task.`,
     });
     const newAgentId = created.id;
-    const updated = markContinued(entry, newAgentId, this.now());
+    const updated = markContinued(entry, newAgentId, this.now(), `[Handoff] ${title}`);
     this.entries.set(input.agentId, updated);
     this.persistEntries();
     await this.appendRow(paseo, input.agentId, {
@@ -305,6 +305,15 @@ export class BatonController {
       continuedAgentId: newAgentId,
     });
     return { agentId: newAgentId, title };
+  }
+
+  async archive(input: { agentId: string }, paseo: PaseoApi): Promise<{ archived: boolean }> {
+    const entry = this.entries.get(input.agentId);
+    if (!entry || entry.status !== "done" || !entry.continuedAgentId) {
+      throw new Error("Only an agent whose handoff was continued can be archived from Baton.");
+    }
+    await paseo.agents.ref(input.agentId).archive();
+    return { archived: true };
   }
 
   async wake(
@@ -830,6 +839,8 @@ export class BatonController {
     // One row per handoff: idleSince is stable for the entry's life, so continuing updates the row in
     // place, while a later handoff for the same agent gets its own row instead of reusing the old one.
     const rowKey = this.entries.get(agentId)?.idleSince ?? 0;
+    const continuedTitle = this.entries.get(agentId)?.continuedTitle;
+    if (continuedTitle && !data.continuedTitle) data = { ...data, continuedTitle };
     const notice = this.pathNotices.get(agentId);
     if (notice) data = { ...data, notice };
     this.pathNotices.delete(agentId);

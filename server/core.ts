@@ -48,8 +48,13 @@ export function markDisabled(entry: BatonEntry, now: number): BatonEntry {
   return transition(entry, { status: "disabled" }, now);
 }
 
-export function markContinued(entry: BatonEntry, continuedAgentId: string, now: number): BatonEntry {
-  return transition(entry, { continuedAgentId }, now);
+export function markContinued(
+  entry: BatonEntry,
+  continuedAgentId: string,
+  now: number,
+  continuedTitle?: string,
+): BatonEntry {
+  return transition(entry, { continuedAgentId, continuedTitle }, now);
 }
 
 export function isExpired(entry: BatonEntry, now: number): boolean {

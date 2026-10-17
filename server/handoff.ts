@@ -2,7 +2,7 @@ export function buildWriterHandoffPrompt(draft: string): string {
   return [
     "Write a handoff document so a fresh agent can continue the task described below without asking the original agent anything.",
     "",
-    "Reply with only the markdown document, no preamble and no code fence. Do not use any tools, read or modify any files, or start new work. Use exactly these headings:",
+    "Reply with only the markdown document, no preamble and no code fence. Do not use any tools, read or modify any files, or start new work. Start with a single line `Title: <3 to 8 word summary of the work>`, a short label the user can scan later to remember what this was about. Then use exactly these headings:",
     "",
     "# Task",
     "# Context",
@@ -36,6 +36,8 @@ export function extractHandoffDocument(timeline: ReadonlyArray<{ type: string; t
 
 export function extractTitleFromDocument(text: string, fallback: string): string {
   const lines = text.split(/\r?\n/);
+  const explicit = text.match(/^\s*Title:[ \t]*([^\r\n]+)/i)?.[1]?.trim();
+  if (explicit) return explicit.slice(0, 80);
   let raw: string | null = null;
   let inTask = false;
   for (const line of lines) {

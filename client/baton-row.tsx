@@ -1,5 +1,5 @@
 import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { z } from "zod";
 import { batonRowSchema } from "../shared/baton";
@@ -12,8 +12,15 @@ export function setOpenHandoff(open: (path: string) => Promise<unknown>): void {
   openHandoff = open;
 }
 
+let archiveAgent: ((agentId: string) => Promise<unknown>) | null = null;
+
+export function setArchiveAgent(archive: (agentId: string) => Promise<unknown>): void {
+  archiveAgent = archive;
+}
+
 export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonRowData>) {
   const data = item.data;
+  const [archiving, setArchiving] = useState(false);
   const styles = useMemo(
     () => ({
       card: {
@@ -65,7 +72,26 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
       </Pressable>
       {data.notice ? <Text style={styles.warning}>{data.notice}</Text> : null}
       {data.continuedAgentId ? (
-        <Text style={styles.hint}>Continued in agent {data.continuedAgentId}</Text>
+        <>
+          <Text style={styles.hint}>
+            Continued on {data.continuedTitle ? `"${data.continuedTitle}"` : `agent ${data.continuedAgentId}`}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Archive this tab"
+            disabled={archiving}
+            onPress={() => {
+              if (!archiveAgent || archiving) return;
+              setArchiving(true);
+              void archiveAgent(data.agentId).catch((error: unknown) => {
+                setArchiving(false);
+                console.error(`[baton] archive failed: ${String(error)}`);
+              });
+            }}
+          >
+            <Text style={styles.path}>{archiving ? "Archiving..." : "Archive this tab"}</Text>
+          </Pressable>
+        </>
       ) : (
         <Text style={styles.hint}>Use the Baton chip in the composer to continue.</Text>
       )}

@@ -354,6 +354,50 @@ describe("BatonController", () => {
     expect(state["agent-a"].continuedAgentId).toBe("agent-continued");
   });
 
+  it("shows the continued title on the row and keeps it when the row is re-appended", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "Title: Fix login bug\n\n# Task\n\nFix the bug.",
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo, appended } = stubPaseo();
+    await controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never);
+    const rowsAfterContinue = appended.slice(1);
+    expect((rowsAfterContinue[0].data as { continuedTitle?: string }).continuedTitle).toBe("[Handoff] Fix login bug");
+    // A later re-append (recovery, finalize) passes no title; the entry's stored title is used.
+    await controller.wake(paseo as never, ["wks-a"]);
+    const titles = appended.slice(1).map((item) => (item.data as { continuedTitle?: string }).continuedTitle);
+    expect(titles.every((title) => title === "[Handoff] Fix login bug")).toBe(true);
+    await controller.dispose();
+  });
+
+  it("archives only an agent whose handoff was continued", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\n\nFix the bug.",
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo, archived } = stubPaseo();
+    await expect(controller.archive({ agentId: "agent-a" }, paseo as never)).rejects.toThrow("Only an agent");
+    expect(archived).toEqual([]);
+    await controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never);
+    await expect(controller.archive({ agentId: "agent-a" }, paseo as never)).resolves.toEqual({ archived: true });
+    expect(archived).toEqual(["agent-a"]);
+    await controller.dispose();
+  });
+
   it("rejects continue when no handoff is done", async () => {
     const io = memoryIo();
     const controller = new BatonController({

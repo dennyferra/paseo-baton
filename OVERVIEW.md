@@ -20,8 +20,8 @@ view of the handoff for review, with a button to open the file in your default a
 chip in the composer that opens a menu:
 
 - **Continue from handoff** (only when a handoff exists) creates a new agent in the same workspace
-  titled `[Handoff] <task>` with the prompt to read the file and continue the task. The row updates
-  to show which agent continued.
+  titled `[Handoff] <short title>` (a short summary the writer adds so you can recall the work later) with the prompt to read the file and continue the task. The row in the original tab updates
+  to say which tab it was continued on, with an **Archive this tab** link.
 - **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
   available only for an idle session that has no handoff yet and has handoffs turned on, and is hidden
   in an ignored workspace or project.
