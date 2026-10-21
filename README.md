@@ -36,6 +36,12 @@ Its menu once a handoff exists, with turning handoffs off disabled:
 - **Stale handoff cleanup.** If you keep working in the original session and nobody continued the
   handoff, Baton deletes the stale file by default. Continued handoffs are kept, and a setting turns
   deletion off.
+- **Subagent wait.** If an agent's subagents are still working when the idle timer ends, Baton
+  restarts the countdown instead of writing the handoff. A setting turns this off. The countdown
+  starts when the agent's own turn ends, since Paseo marks a parent idle regardless of its
+  subagents. Only subagents started as Paseo agents are waited for; provider-internal ones (such
+  as Claude's Task tool) are invisible to Baton. A subagent still running after four hours, or one that was running when
+  the plugin restarted, is not waited for.
 
 ## Install
 

@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BatonStoreIo } from "../server/store";
 import { BatonController } from "../server/controller";
-import { batonStateSchema, type BatonSettings } from "../shared/baton";
+import { batonStateSchema, DEFAULT_SETTINGS, SUBAGENT_WAIT_LIMIT_MS, type BatonSettings } from "../shared/baton";
 
 const NOW = 1_000_000;
 const HANDOFF_PATH = "/work/.paseo/handoffs/agent-a.md";
@@ -44,6 +44,7 @@ function settings(overrides: Partial<BatonSettings> = {}) {
     handoffProfileId: "",
     handoffDirectory: "",
     deleteStaleHandoffs: true,
+    waitForSubagents: true,
     ignoredWorkspaceIds: [],
     ignoredProjectIds: [],
     ...overrides,
@@ -172,6 +173,83 @@ describe("BatonController", () => {
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
     expect(state["agent-a"]).toBeUndefined();
+  });
+
+  describe("waiting for subagents", () => {
+    const DELAY = DEFAULT_SETTINGS.idleDelayMinutes * 60 * 1000;
+    const parent = { id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null };
+
+    function setup(overrides: Partial<BatonSettings> = {}) {
+      vi.useFakeTimers();
+      const clock = { now: NOW };
+      const io = memoryIo();
+      const controller = new BatonController({
+        dataDir: "/home/.paseo/plugin-data/baton",
+        settings: settings(overrides),
+        log: () => {},
+        io,
+        now: () => clock.now,
+      });
+      const stub = stubPaseo();
+      const elapse = async (ms: number) => {
+        clock.now += ms;
+        await vi.advanceTimersByTimeAsync(ms);
+      };
+      const readEntry = async () =>
+        (await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}")))["agent-a"];
+      return { controller, clock, elapse, readEntry, ...stub };
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("restarts the countdown while a subagent is still working", async () => {
+      const { controller, clock, elapse, readEntry, paseo, created } = setup();
+      await controller.onTurnEnded(parent, [], paseo as never);
+      controller.onTurnStarted({ id: "child-1", parentAgentId: "agent-a" });
+      await elapse(DELAY);
+      expect(created).toHaveLength(0);
+      const entry = await readEntry();
+      expect(entry.status).toBe("pending");
+      expect(entry.fireAt).toBe(clock.now + DELAY);
+
+      await controller.onTurnEnded({ ...parent, id: "child-1", parentAgentId: "agent-a" }, [], paseo as never);
+      await elapse(DELAY);
+      expect(created).toHaveLength(1);
+      controller.dispose();
+    });
+
+    it("writes the handoff despite working subagents when waiting is off", async () => {
+      const { controller, elapse, paseo, created } = setup({ waitForSubagents: false });
+      await controller.onTurnEnded(parent, [], paseo as never);
+      controller.onTurnStarted({ id: "child-1", parentAgentId: "agent-a" });
+      await elapse(DELAY);
+      expect(created).toHaveLength(1);
+      controller.dispose();
+    });
+
+    it("waits for a nested subagent even when its parent subagent is idle", async () => {
+      const { controller, elapse, paseo, created } = setup();
+      await controller.onTurnEnded(parent, [], paseo as never);
+      controller.onTurnStarted({ id: "child-1", parentAgentId: "agent-a" });
+      await controller.onTurnEnded({ ...parent, id: "child-1", parentAgentId: "agent-a" }, [], paseo as never);
+      controller.onTurnStarted({ id: "grandchild-1", parentAgentId: "child-1" });
+      await elapse(DELAY);
+      expect(created).toHaveLength(0);
+      controller.dispose();
+    });
+
+    it("stops waiting for a subagent that never reports back", async () => {
+      const { controller, elapse, paseo, created } = setup();
+      await controller.onTurnEnded(parent, [], paseo as never);
+      controller.onTurnStarted({ id: "child-1", parentAgentId: "agent-a" });
+      await elapse(SUBAGENT_WAIT_LIMIT_MS);
+      expect(created).toHaveLength(0);
+      await elapse(DELAY);
+      expect(created).toHaveLength(1);
+      controller.dispose();
+    });
   });
 
   function makeController(io: ReturnType<typeof memoryIo>) {

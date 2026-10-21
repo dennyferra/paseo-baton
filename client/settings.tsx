@@ -254,9 +254,15 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       <SettingsCard>
         <SettingsInput
           label="Idle delay (minutes)"
-          hint="Write a handoff once an agent has been idle this long (1-240)."
+          hint="Write a handoff once an agent has been idle this long (1-240). The countdown starts when the agent's own turn ends, even if subagents it started are still running."
           initialValue={String(draft.idleDelayMinutes)}
           onChangeText={(value) => update({ idleDelayMinutes: clampDelay(value, draft.idleDelayMinutes) })}
+        />
+        <SettingsSwitch
+          label="Wait for subagents to finish"
+          hint="If agents started by this one are still working when the countdown ends, restart it instead of writing the handoff. Turn off to write it regardless. A subagent still running after 4 hours is no longer waited for. Subagents that run inside the provider itself (for example Claude's Task tool) are not visible to Baton and are not waited for."
+          value={draft.waitForSubagents}
+          onValueChange={(value) => update({ waitForSubagents: value })}
         />
       </SettingsCard>
       <Text style={styles.sectionTitle}>Handoff writer</Text>
