@@ -10,6 +10,7 @@ import {
   DEFAULT_RETENTION_MS,
   DEFAULT_SETTINGS,
   HANDOFF_FALLBACK_TIMEOUT_MS,
+  SUBAGENT_WAIT_LIMIT_MS,
 } from "../shared/baton";
 import {
   createPendingEntry,
@@ -19,6 +20,7 @@ import {
   markSkipped,
   markWriting,
   planRecovery,
+  transition,
 } from "./core";
 import {
   buildWriterHandoffPrompt,
@@ -33,6 +35,7 @@ import { renderMechanicalHandoff } from "./timeline-summary";
 type AgentStatus = NonNullable<PaseoAgent["status"]>;
 type RowData = { agentId: string; path: string; continuedAgentId?: string; continuedTitle?: string; notice?: string };
 type BatonHandoffInfo = HandoffInfo;
+type TurnAgent = { id: string; workspaceId: string | null; cwd: string; parentAgentId: string | null };
 
 export interface BatonControllerDeps {
   dataDir: string;
@@ -59,6 +62,10 @@ async function openFileWithOs(filePath: string): Promise<void> {
   }
 }
 
+function idleDelayMs(settings: BatonSettings): number {
+  return settings.idleDelayMinutes * 60_000;
+}
+
 export class BatonController {
   private readonly dataDir: string;
   private readonly settings: PluginSettings<typeof batonSettingsSchema>;
@@ -68,6 +75,10 @@ export class BatonController {
   private readonly openFile: (filePath: string) => Promise<void>;
   private readonly stateFile: string;
   private paseo: PaseoApi | null = null;
+  /** Subagents mid-turn, keyed by subagent id, valued by when the turn started. */
+  private readonly busySubagents = new Map<string, number>();
+  /** Subagent id to parent id, kept after the turn ends so nested subagents can be traced to their root. */
+  private readonly parentOf = new Map<string, string>();
   private entries = new Map<string, BatonEntry>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private fallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -114,11 +125,12 @@ export class BatonController {
   }
 
   async onTurnEnded(
-    agent: { id: string; workspaceId: string | null; cwd: string; parentAgentId: string | null },
+    agent: TurnAgent,
     timeline: readonly AgentTimelineItem[],
     paseo: PaseoApi,
   ): Promise<void> {
     this.setPaseo(paseo);
+    this.busySubagents.delete(agent.id);
     await this.ensureRecovered(paseo);
     if (this.disposed) return;
     this.lastTimeline.set(agent.id, timeline);
@@ -137,8 +149,12 @@ export class BatonController {
     await this.beginIdle(agent, paseo);
   }
 
-  onTurnStarted(agent: { id: string }): void {
+  onTurnStarted(agent: Pick<TurnAgent, "id"> & { parentAgentId?: string | null }): void {
     const agentId = agent.id;
+    if (agent.parentAgentId) {
+      this.parentOf.set(agentId, agent.parentAgentId);
+      this.busySubagents.set(agentId, this.now());
+    }
     this.clearTimer(agentId);
     this.clearFallbackTimer(agentId);
     if (this.pendingHandoff.has(agentId)) {
@@ -484,7 +500,7 @@ export class BatonController {
   }
 
   private async beginIdle(
-    agent: { id: string; workspaceId: string | null; cwd: string; parentAgentId: string | null },
+    agent: TurnAgent,
     paseo: PaseoApi,
   ): Promise<void> {
     if (!agent.workspaceId) {
@@ -510,11 +526,9 @@ export class BatonController {
       projectId: projectId ?? undefined,
       cwd: agent.cwd,
       idleSince: now,
-      delayMs: settings.idleDelayMinutes * 60_000,
+      delayMs: idleDelayMs(settings),
     });
-    this.entries.set(agent.id, entry);
-    await this.persistEntries();
-    this.setTimer(agent.id, entry.fireAt - now, entry);
+    await this.armEntry(entry);
   }
 
   private async workspaceProjectId(paseo: PaseoApi, workspaceId: string): Promise<string | null> {
@@ -535,6 +549,37 @@ export class BatonController {
       this.log(`Reading settings failed: ${String(error)}`);
     }
     return DEFAULT_SETTINGS;
+  }
+
+  /** Restarts the countdown instead of writing while the agent's subagents are still working. */
+  private async deferOrFire(entry: BatonEntry, paseo: PaseoApi): Promise<void> {
+    const settings = await this.readSettings();
+    if (settings.waitForSubagents && this.hasBusySubagents(entry.agentId)) {
+      const now = this.now();
+      await this.armEntry(transition(entry, { fireAt: now + idleDelayMs(settings) }, now));
+      return;
+    }
+    await this.fire(entry, paseo);
+  }
+
+  /** True while any descendant of the agent is mid-turn; turns older than the wait limit are ignored. */
+  private hasBusySubagents(agentId: string): boolean {
+    const now = this.now();
+    for (const [subagentId, since] of this.busySubagents) {
+      if (now - since > SUBAGENT_WAIT_LIMIT_MS) continue;
+      const seen = new Set<string>();
+      for (let id = this.parentOf.get(subagentId); id && !seen.has(id); id = this.parentOf.get(id)) {
+        if (id === agentId) return true;
+        seen.add(id);
+      }
+    }
+    return false;
+  }
+
+  private async armEntry(entry: BatonEntry): Promise<void> {
+    this.entries.set(entry.agentId, entry);
+    await this.persistEntries();
+    this.setTimer(entry.agentId, entry.fireAt - this.now(), entry);
   }
 
   private async fire(entry: BatonEntry, paseo: PaseoApi): Promise<void> {
@@ -716,7 +761,7 @@ export class BatonController {
       if (!current || current.updatedAt !== entry.updatedAt) return;
       const paseo = this.paseo;
       if (!paseo) return;
-      void this.fire(current, paseo).catch((error: unknown) => {
+      void this.deferOrFire(current, paseo).catch((error: unknown) => {
         this.log(`Handoff fire for ${agentId} failed: ${String(error)}`);
       });
     }, delayMs);
@@ -769,6 +814,8 @@ export class BatonController {
   }
 
   private cleanupAgent(agentId: string): void {
+    this.busySubagents.delete(agentId);
+    this.parentOf.delete(agentId);
     this.dropEntry(agentId);
     this.pendingHandoff.delete(agentId);
     this.lastTimeline.delete(agentId);
