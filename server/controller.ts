@@ -20,7 +20,12 @@ import {
   markWriting,
   planRecovery,
 } from "./core";
-import { buildWriterHandoffPrompt, extractHandoffDocument, extractTitleFromDocument } from "./handoff";
+import {
+  buildWriterHandoffPrompt,
+  extractHandoffDocument,
+  extractTitleFromDocument,
+  stampHandoffDocument,
+} from "./handoff";
 import { handoffPathFor, resolveStateFile } from "./paths";
 import { loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
@@ -665,7 +670,7 @@ export class BatonController {
     if (!exists && document) {
       try {
         await this.io.mkdir(dirname(handoffPath));
-        await this.io.writeFile(handoffPath, document);
+        await this.io.writeFile(handoffPath, stampHandoffDocument(document, this.now()));
         exists = true;
       } catch (error: unknown) {
         this.log(`Writing handoff document for ${agentId} failed: ${String(error)}`);

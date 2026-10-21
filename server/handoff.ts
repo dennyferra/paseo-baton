@@ -62,3 +62,15 @@ export function extractTitleFromDocument(text: string, fallback: string): string
   const cleaned = (raw ?? fallback).replace(/^#+\s*/, "").trim();
   return cleaned.slice(0, 80) || fallback;
 }
+
+/** Adds a `Created:` line below the title line (or at the top when there is none), replacing any the writer added. */
+export function stampHandoffDocument(document: string, now: number): string {
+  const stamp = `Created: ${new Date(now).toISOString()}`;
+  const headingIndex = document.split("\n").findIndex((line) => /^#/.test(line));
+  const lines = document
+    .split("\n")
+    .filter((line, index) => !(/^\s*Created:/i.test(line) && (headingIndex < 0 || index < headingIndex)));
+  const titleIndex = lines.findIndex((line) => /^\s*Title:/i.test(line));
+  lines.splice(titleIndex + 1, 0, stamp);
+  return lines.join("\n");
+}
