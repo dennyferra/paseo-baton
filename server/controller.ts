@@ -7,9 +7,11 @@ import { promisify } from "node:util";
 import type { BatonEntry, BatonState, BatonSettings, HandoffInfo } from "../shared/baton";
 import { batonSettingsSchema, BATON_WRITER_LABEL, BATON_WRITER_TITLE } from "../shared/baton";
 import {
+  DAY_MS,
   DEFAULT_RETENTION_MS,
   DEFAULT_SETTINGS,
   HANDOFF_FALLBACK_TIMEOUT_MS,
+  isProjectIgnored,
   SUBAGENT_WAIT_LIMIT_MS,
 } from "../shared/baton";
 import {
@@ -28,8 +30,8 @@ import {
   extractTitleFromDocument,
   stampHandoffDocument,
 } from "./handoff";
-import { handoffPathFor, resolveStateFile } from "./paths";
-import { loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
+import { handoffFileName, handoffPathFor, resolveStateFile } from "./paths";
+import { isMissing, loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
 
 type AgentStatus = NonNullable<PaseoAgent["status"]>;
@@ -88,6 +90,8 @@ export class BatonController {
   private writerAgentIds = new Set<string>();
   private pathNotices = new Map<string, string>();
   private writerByAgentId = new Map<string, string>();
+  private housekeepingTimer: ReturnType<typeof setInterval> | null = null;
+  private cleanupRun: Promise<number> | null = null;
   private recoveryPromise: Promise<void> | null = null;
   private recovered = false;
   private disposed = false;
@@ -120,6 +124,7 @@ export class BatonController {
       })
       .finally(() => {
         this.recoveryPromise = null;
+        this.startHousekeeping();
       });
     return this.recoveryPromise.then(() => this.recovered);
   }
@@ -170,6 +175,53 @@ export class BatonController {
     }
   }
 
+  /** Runs the cleanup now and then once a day for as long as the plugin runs. */
+  private startHousekeeping(): void {
+    if (this.disposed || this.housekeepingTimer) return;
+    const run = () => {
+      void this.cleanupOldHandoffs().catch((error: unknown) => {
+        this.log(`Handoff cleanup failed: ${String(error)}`);
+      });
+    };
+    run();
+    this.housekeepingTimer = setInterval(run, DAY_MS);
+    this.housekeepingTimer.unref?.();
+  }
+
+  /** Deletes handoff files nobody continued once they are older than the configured number of days. */
+  cleanupOldHandoffs(): Promise<number> {
+    this.cleanupRun ??= this.sweepOldHandoffs().finally(() => {
+      this.cleanupRun = null;
+    });
+    return this.cleanupRun;
+  }
+
+  private async sweepOldHandoffs(): Promise<number> {
+    const settings = await this.readSettings();
+    if (!settings.cleanupOldHandoffs) return 0;
+    const cutoff = this.now() - settings.cleanupAfterDays * DAY_MS;
+    let removed = 0;
+    for (const entry of [...this.entries.values()]) {
+      if (entry.status !== "done" || !entry.path || entry.continuedAgentId || entry.updatedAt > cutoff) continue;
+      // Only ever delete the agent's own handoff file, whatever the state file says.
+      if (path.basename(entry.path) !== handoffFileName(entry.agentId)) continue;
+      // Drop the record first so a handoff can't be continued while its file is being deleted.
+      this.entries.delete(entry.agentId);
+      try {
+        await this.io.unlink(entry.path);
+      } catch (error: unknown) {
+        if (!isMissing(error)) {
+          this.log(`Removing old handoff ${entry.path} failed: ${String(error)}`);
+          this.entries.set(entry.agentId, entry);
+          continue;
+        }
+      }
+      removed += 1;
+    }
+    if (removed > 0) await this.persistEntries();
+    return removed;
+  }
+
   private async removeStaleHandoff(handoffPath: string): Promise<void> {
     try {
       if (!(await this.readSettings()).deleteStaleHandoffs) return;
@@ -199,7 +251,7 @@ export class BatonController {
     const settings = await this.readSettings();
     if (settings.ignoredWorkspaceIds.includes(agent.workspaceId)) throw new Error("This workspace is ignored in Baton settings.");
     const projectId = await this.workspaceProjectId(paseo, agent.workspaceId);
-    if (projectId && settings.ignoredProjectIds.includes(projectId)) {
+    if (projectId && isProjectIgnored(settings, projectId)) {
       throw new Error("This project is ignored in Baton settings.");
     }
     this.clearTimer(agentId);
@@ -392,9 +444,9 @@ export class BatonController {
     for (const workspaceId of new Set(workspaceIds)) {
       if (settings.ignoredWorkspaceIds.includes(workspaceId)) {
         ignored[workspaceId] = "workspace";
-      } else if (settings.ignoredProjectIds.length > 0) {
+      } else if (settings.ignoredProjectIds.length > 0 || settings.ignoreNewProjects) {
         const projectId = await this.workspaceProjectId(paseo, workspaceId);
-        if (projectId && settings.ignoredProjectIds.includes(projectId)) ignored[workspaceId] = "project";
+        if (projectId && isProjectIgnored(settings, projectId)) ignored[workspaceId] = "project";
       }
     }
     return ignored;
@@ -422,8 +474,11 @@ export class BatonController {
     this.disposed = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const timer of this.fallbackTimers.values()) clearTimeout(timer);
+    if (this.housekeepingTimer) clearInterval(this.housekeepingTimer);
+    this.housekeepingTimer = null;
     this.timers.clear();
     this.fallbackTimers.clear();
+    await this.cleanupRun?.catch(() => undefined);
     await this.writeQueue;
   }
 
@@ -463,7 +518,7 @@ export class BatonController {
       now: this.now(),
       knownAgentIds,
       ignoredWorkspaceIds: new Set(recoverySettings.ignoredWorkspaceIds),
-      ignoredProjectIds: new Set(recoverySettings.ignoredProjectIds),
+      isProjectIgnored: (projectId) => isProjectIgnored(recoverySettings, projectId),
       handoffPath: (agentId) => existingPaths.get(agentId) ?? null,
       retentionMs: DEFAULT_RETENTION_MS,
     });
@@ -518,7 +573,7 @@ export class BatonController {
       return;
     }
     const projectId = await this.workspaceProjectId(paseo, agent.workspaceId);
-    if (projectId && settings.ignoredProjectIds.includes(projectId)) return;
+    if (projectId && isProjectIgnored(settings, projectId)) return;
     const now = this.now();
     const entry = createPendingEntry({
       agentId: agent.id,

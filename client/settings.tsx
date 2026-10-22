@@ -5,7 +5,7 @@ import { useToast } from "@getpaseo/plugin/client/react-native";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { BatonSettings } from "../shared/baton";
-import { batonSettings, DEFAULT_SETTINGS } from "../shared/baton";
+import { batonSettings, DEFAULT_SETTINGS, isProjectIgnored, MAX_CLEANUP_DAYS, MAX_IDLE_DELAY_MINUTES } from "../shared/baton";
 
 interface ProfileChoice {
   value: string;
@@ -40,10 +40,10 @@ function describeProfile(profile: DaemonProfile, snapshot: ProviderSnapshot | nu
   return parts.join(" · ");
 }
 
-function clampDelay(value: string, fallback: number): number {
+function clampInt(value: string, fallback: number, max: number): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(240, Math.max(1, parsed));
+  return Math.min(max, Math.max(1, parsed));
 }
 
 export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
@@ -53,6 +53,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
   const [draft, setDraft] = useState<BatonSettings | null>(null);
   const [profiles, setProfiles] = useState<ProfileChoice[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceChoice[]>([]);
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -86,6 +87,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
             projectId: workspace.projectId,
           })),
         );
+        setWorkspacesLoaded(true);
       } catch (error: unknown) {
         if (!cancelled) setLoadError(String(error));
       }
@@ -211,7 +213,18 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
 
   const toggleProject = (id: string, ignored: boolean) => {
     const rest = draft.ignoredProjectIds.filter((existing) => existing !== id);
-    update({ ignoredProjectIds: ignored ? [...rest, id] : rest });
+    update({
+      ignoredProjectIds: ignored ? [...rest, id] : rest,
+      knownProjectIds: [...new Set([...draft.knownProjectIds, id])],
+    });
+  };
+
+  // Projects that exist when the switch is turned on stay active; only projects that appear later are ignored.
+  const setIgnoreNewProjects = (value: boolean) => {
+    update({
+      ignoreNewProjects: value,
+      knownProjectIds: value ? [...new Set([...draft.knownProjectIds, ...projects.map(([id]) => id)])] : draft.knownProjectIds,
+    });
   };
 
   const toggleWorkspace = (id: string, ignored: boolean) => {
@@ -254,9 +267,9 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       <SettingsCard>
         <SettingsInput
           label="Idle delay (minutes)"
-          hint="Write a handoff once an agent has been idle this long (1-240). The countdown starts when the agent's own turn ends, even if subagents it started are still running."
+          hint={`Write a handoff once an agent has been idle this long (1-${MAX_IDLE_DELAY_MINUTES}). The countdown starts when the agent's own turn ends, even if subagents it started are still running.`}
           initialValue={String(draft.idleDelayMinutes)}
-          onChangeText={(value) => update({ idleDelayMinutes: clampDelay(value, draft.idleDelayMinutes) })}
+          onChangeText={(value) => update({ idleDelayMinutes: clampInt(value, draft.idleDelayMinutes, MAX_IDLE_DELAY_MINUTES) })}
         />
         <SettingsSwitch
           label="Wait for subagents to finish"
@@ -302,14 +315,37 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
           value={draft.deleteStaleHandoffs}
           onValueChange={(value) => update({ deleteStaleHandoffs: value })}
         />
+        <SettingsSwitch
+          label="Clean up old handoffs automatically"
+          hint="Once a day, and when Baton starts, delete handoff files that nobody continued after the number of days below. Handoffs you continued are kept."
+          value={draft.cleanupOldHandoffs}
+          onValueChange={(value) => update({ cleanupOldHandoffs: value })}
+        />
+        {draft.cleanupOldHandoffs ? (
+          <SettingsInput
+            label="Clean up after (days)"
+            hint={`1-${MAX_CLEANUP_DAYS}. Counted from when the handoff was written.`}
+            initialValue={String(draft.cleanupAfterDays)}
+            onChangeText={(value) => update({ cleanupAfterDays: clampInt(value, draft.cleanupAfterDays, MAX_CLEANUP_DAYS) })}
+          />
+        ) : null}
       </SettingsCard>
       <Text style={styles.sectionTitle}>Ignored projects and workspaces</Text>
       <Text style={[styles.hint, { marginBottom: 8 }]}>
         Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers all of its
         workspaces, including ones created later.
       </Text>
+      <SettingsCard>
+        <SettingsSwitch
+          label="Ignore new projects by default"
+          hint="Off by default, so new projects get handoffs. Turn on to leave projects that appear from now on ignored until you switch them on here. Projects listed below keep their current setting."
+          value={draft.ignoreNewProjects}
+          disabled={!workspacesLoaded}
+          onValueChange={setIgnoreNewProjects}
+        />
+      </SettingsCard>
       {projects.map(([projectId, group]) => {
-        const projectIgnored = draft.ignoredProjectIds.includes(projectId);
+        const projectIgnored = isProjectIgnored(draft, projectId);
         return (
           <View key={projectId}>
             <Text style={styles.subTitle}>{group.name}</Text>

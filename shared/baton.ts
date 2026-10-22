@@ -38,31 +38,49 @@ export const HANDOFF_TEMPLATE_SECTIONS = [
   "Constraints",
 ] as const;
 
+export const DAY_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_IDLE_DELAY_MINUTES = 15;
 export const HANDOFF_DEADLINE_SLACK_MS = 60 * 60 * 1000;
-export const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long finished records stay in the state file. Deleting the files sooner is the cleanup setting's job. */
+export const DEFAULT_RETENTION_MS = 7 * DAY_MS;
 export const HANDOFF_FALLBACK_TIMEOUT_MS = 3 * 60 * 1000;
 export const MIN_FIRE_DELAY_MS = 1000;
+export const MAX_IDLE_DELAY_MINUTES = 240;
+export const DEFAULT_CLEANUP_DAYS = 3;
+export const MAX_CLEANUP_DAYS = 365;
 /** A subagent mid-turn longer than this no longer holds back a handoff (it probably never reported back). */
 export const SUBAGENT_WAIT_LIMIT_MS = 4 * 60 * 60 * 1000;
 
 export const batonSettingsSchema = z.object({
-  idleDelayMinutes: z.number().int().min(1).max(240).default(DEFAULT_IDLE_DELAY_MINUTES),
+  idleDelayMinutes: z.number().int().min(1).max(MAX_IDLE_DELAY_MINUTES).default(DEFAULT_IDLE_DELAY_MINUTES),
   handoffProfileId: z.string().trim().max(200).default(""),
   handoffDirectory: z.string().trim().max(500).default(""),
   deleteStaleHandoffs: z.boolean().default(true),
   waitForSubagents: z.boolean().default(true),
+  cleanupOldHandoffs: z.boolean().default(true),
+  cleanupAfterDays: z.number().int().min(1).max(MAX_CLEANUP_DAYS).default(DEFAULT_CLEANUP_DAYS),
   ignoredWorkspaceIds: z.array(z.string()).default([]),
   ignoredProjectIds: z.array(z.string()).default([]),
+  ignoreNewProjects: z.boolean().default(false),
+  knownProjectIds: z.array(z.string()).default([]),
 });
 export type BatonSettings = z.infer<typeof batonSettingsSchema>;
 
 export const DEFAULT_SETTINGS: BatonSettings = batonSettingsSchema.parse({});
 
+/** A project is ignored when listed, or when it is new (not in knownProjectIds) and new projects are ignored by default. */
+export function isProjectIgnored(
+  settings: Pick<BatonSettings, "ignoredProjectIds" | "ignoreNewProjects" | "knownProjectIds">,
+  projectId: string,
+): boolean {
+  if (settings.ignoredProjectIds.includes(projectId)) return true;
+  return settings.ignoreNewProjects && !settings.knownProjectIds.includes(projectId);
+}
+
 export const batonSettings = defineSettings({
   id: "baton",
   scope: "host",
-  version: 8,
+  version: 10,
   schema: batonSettingsSchema,
   migrate: (values) => {
     const old = values && typeof values === "object" ? (values as Record<string, unknown>) : {};
@@ -72,9 +90,13 @@ export const batonSettings = defineSettings({
       ...(typeof old.handoffProfileId === "string" ? { handoffProfileId: old.handoffProfileId } : {}),
       ...(typeof old.deleteStaleHandoffs === "boolean" ? { deleteStaleHandoffs: old.deleteStaleHandoffs } : {}),
       ...(typeof old.waitForSubagents === "boolean" ? { waitForSubagents: old.waitForSubagents } : {}),
+      ...(typeof old.cleanupOldHandoffs === "boolean" ? { cleanupOldHandoffs: old.cleanupOldHandoffs } : {}),
+      ...(typeof old.cleanupAfterDays === "number" ? { cleanupAfterDays: old.cleanupAfterDays } : {}),
       ...(typeof old.handoffDirectory === "string" ? { handoffDirectory: old.handoffDirectory } : {}),
       ...(Array.isArray(old.ignoredWorkspaceIds) ? { ignoredWorkspaceIds: old.ignoredWorkspaceIds } : {}),
       ...(Array.isArray(old.ignoredProjectIds) ? { ignoredProjectIds: old.ignoredProjectIds } : {}),
+      ...(typeof old.ignoreNewProjects === "boolean" ? { ignoreNewProjects: old.ignoreNewProjects } : {}),
+      ...(Array.isArray(old.knownProjectIds) ? { knownProjectIds: old.knownProjectIds } : {}),
     };
   },
 });

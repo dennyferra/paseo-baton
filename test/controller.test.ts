@@ -45,8 +45,12 @@ function settings(overrides: Partial<BatonSettings> = {}) {
     handoffDirectory: "",
     deleteStaleHandoffs: true,
     waitForSubagents: true,
+    cleanupOldHandoffs: true,
+    cleanupAfterDays: 3,
     ignoredWorkspaceIds: [],
     ignoredProjectIds: [],
+    ignoreNewProjects: false,
+    knownProjectIds: [],
     ...overrides,
   };
   return {
@@ -565,6 +569,119 @@ describe("BatonController", () => {
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
     expect(Object.keys(state)).toEqual([]);
+  });
+
+  it.each([
+    { name: "ignores a project that is new", known: [], expected: [] },
+    { name: "keeps a known project active", known: ["proj-1"], expected: ["agent-a"] },
+  ])("when new projects are ignored by default, $name", async ({ known, expected }) => {
+    const io = memoryIo();
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings({ ignoreNewProjects: true, knownProjectIds: known }),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo } = stubPaseo();
+    await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+    await controller.dispose();
+    const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+    expect(Object.keys(state)).toEqual(expected);
+  });
+
+  describe("cleaning up old handoffs", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const doneEntry = (agentId: string, updatedAt: number, extra: object = {}) => ({
+      agentId,
+      workspaceId: "wks-a",
+      idleSince: updatedAt,
+      fireAt: updatedAt,
+      deadline: updatedAt,
+      updatedAt,
+      status: "done",
+      path: `/work/.paseo/handoffs/${agentId}.md`,
+      ...extra,
+    });
+
+    async function run(overrides: Partial<BatonSettings>) {
+      const io = memoryIo({
+        [STATE_FILE]: JSON.stringify({
+          old: doneEntry("old", NOW - 4 * DAY),
+          fresh: doneEntry("fresh", NOW - 2 * DAY),
+          continued: doneEntry("continued", NOW - 4 * DAY, { continuedAgentId: "next" }),
+        }),
+        "/work/.paseo/handoffs/old.md": "x",
+        "/work/.paseo/handoffs/fresh.md": "x",
+        "/work/.paseo/handoffs/continued.md": "x",
+      });
+      const controller = new BatonController({
+        dataDir: "/home/.paseo/plugin-data/baton",
+        settings: settings(overrides),
+        log: () => {},
+        io,
+        now: () => NOW,
+      });
+      await controller.ensureRecovered(stubPaseo().paseo as never);
+      const removed = await controller.cleanupOldHandoffs();
+      await controller.dispose();
+      const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+      return { io, removed, state };
+    }
+
+    it("deletes unused handoffs older than the limit and keeps the rest", async () => {
+      const { io, state } = await run({});
+      expect(io.files.has("/work/.paseo/handoffs/old.md")).toBe(false);
+      expect(io.files.has("/work/.paseo/handoffs/fresh.md")).toBe(true);
+      expect(io.files.has("/work/.paseo/handoffs/continued.md")).toBe(true);
+      expect(Object.keys(state).sort()).toEqual(["continued", "fresh"]);
+    });
+
+    it("never deletes a file that is not the agent's own handoff", async () => {
+      const io = memoryIo({
+        [STATE_FILE]: JSON.stringify({ old: doneEntry("old", NOW - 4 * DAY, { path: "/etc/important.txt" }) }),
+        "/etc/important.txt": "x",
+      });
+      const controller = new BatonController({
+        dataDir: "/home/.paseo/plugin-data/baton",
+        settings: settings({}),
+        log: () => {},
+        io,
+        now: () => NOW,
+      });
+      await controller.ensureRecovered(stubPaseo().paseo as never);
+      expect(await controller.cleanupOldHandoffs()).toBe(0);
+      await controller.dispose();
+      expect(io.files.has("/etc/important.txt")).toBe(true);
+    });
+
+    it("keeps the record when the file cannot be deleted", async () => {
+      const io = memoryIo({
+        [STATE_FILE]: JSON.stringify({ old: doneEntry("old", NOW - 4 * DAY) }),
+        "/work/.paseo/handoffs/old.md": "x",
+      });
+      io.unlink = async () => {
+        throw new Error("EACCES");
+      };
+      const controller = new BatonController({
+        dataDir: "/home/.paseo/plugin-data/baton",
+        settings: settings({}),
+        log: () => {},
+        io,
+        now: () => NOW,
+      });
+      await controller.ensureRecovered(stubPaseo().paseo as never);
+      expect(await controller.cleanupOldHandoffs()).toBe(0);
+      await controller.dispose();
+      const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+      expect(Object.keys(state)).toEqual(["old"]);
+    });
+
+    it("does nothing when cleanup is turned off", async () => {
+      const { io, removed } = await run({ cleanupOldHandoffs: false });
+      expect(removed).toBe(0);
+      expect(io.files.has("/work/.paseo/handoffs/old.md")).toBe(true);
+    });
   });
 
   it("saves the handoff in the custom directory from settings", async () => {
