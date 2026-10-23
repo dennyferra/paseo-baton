@@ -2,6 +2,7 @@
   "id": "baton",
   "name": "Baton",
   "description": "Writes a handoff document when an agent goes idle, then lets you continue the task in a fresh agent.",
+  "icon": "assets/icon.png",
   "media": [
     "assets/handoff-saved.png",
     "assets/baton-chip.png",
