@@ -43,7 +43,12 @@ in the plugin settings.
 Settings live under Settings -> Plugins -> Baton.
 
 - **Idle delay** (`idleDelayMinutes`, default 15, 1-240): how long an agent sits idle before a
-  handoff is written. It does not depend on any provider's prompt cache.
+  handoff is written. It does not depend on any provider's prompt cache. The countdown starts when the
+  agent's own turn ends.
+- **Wait for subagents to finish** (`waitForSubagents`, default on): if agents started by this one are
+  still working when the countdown ends, Baton restarts it instead of writing the handoff. A subagent
+  still running after 4 hours, one running when the plugin restarted, and provider-internal subagents
+  (such as Claude's Task tool) are not waited for. "Create handoff now" ignores this.
 - **Handoff writer** (`handoffProfileId`): pick one of your Paseo agent profiles. Its provider,
   model and effort are used; its mode is ignored. The writer never needs file access: it replies with the document and Baton writes the file. The default,
   "Same as running agent", uses the idle agent's own model and effort. The writer is a short-lived
@@ -56,9 +61,16 @@ Settings live under Settings -> Plugins -> Baton.
 - **Delete unused handoffs when a session resumes** (`deleteStaleHandoffs`, default on): removes a
   handoff file that nobody continued once you keep working in the original session. Turn it off to
   keep every file. The chat row can then no longer open it, but the file stays on disk.
+- **Clean up old handoffs automatically** (`cleanupOldHandoffs`, default on) and **Clean up after
+  (days)** (`cleanupAfterDays`, default 3, 1-365): when Baton starts and once a day after that, it
+  deletes handoff files nobody continued that are older than the limit, counted from when they were
+  written. Handoffs you continued are kept.
 - **Ignored projects and workspaces** (`ignoredProjectIds`, `ignoredWorkspaceIds`): switches grouped by
   project. Ignoring a project covers all its workspaces, including ones created later; ignoring a
   workspace covers just that one. Ignored agents never produce handoffs.
+- **Ignore new projects by default** (`ignoreNewProjects`, default off): projects are active unless
+  you ignore them. Turn this on to ignore projects that appear later until you switch them on.
+  Projects that exist when you turn it on keep their current setting.
 
 ## Data
 
@@ -68,6 +80,9 @@ draft built from the conversation Paseo reports when a turn ends: the last 30 me
 such as file paths and URLs. Tool output is not included. The writer runs on the provider and model of the profile you pick, or on the idle agent's
 own provider and model by default, so that provider sees this text. If the writer fails, the
 fallback summary is built locally and nothing is sent.
+
+Each handoff file starts with a `Created:` timestamp, and the "Handoff saved" row shows when it was
+saved.
 
 Handoff files stay on the machine that runs the Paseo daemon, in `.paseo/handoffs` inside each
 workspace or in the storage location you set. They contain a summary of the conversation, so keep

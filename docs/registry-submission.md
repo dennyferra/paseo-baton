@@ -36,7 +36,10 @@ For review:
   recent conversation text to the provider of the profile you choose.
 - Filesystem: writes handoff files to .paseo/handoffs in the workspace (or a user-chosen
   folder) and its own state file under ~/.paseo/plugin-data/baton. By default it deletes
-  an unused handoff when the original session resumes; a setting turns that off.
+  an unused handoff when the original session resumes, and deletes unused handoff files
+  older than 3 days (on start and once a day). Both have settings to turn them off, and it
+  only ever deletes <agentId>.md files it recorded itself. The only environment variable
+  it reads is PASEO_HOME, to find the daemon home.
 - Execution: one subprocess, the OS opener (open / xdg-open / cmd start), run only when
   the user clicks "Open in default app" on a handoff Baton saved.
 - No runtime software installation. The package is readable TypeScript with no bundling.
