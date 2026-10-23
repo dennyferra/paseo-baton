@@ -19,6 +19,7 @@ export const batonEntrySchema = z.object({
   path: z.string().optional(),
   continuedAgentId: z.string().optional(),
   continuedTitle: z.string().optional(),
+  savedAt: z.number().optional(),
 });
 export type BatonEntry = z.infer<typeof batonEntrySchema>;
 
@@ -110,6 +111,7 @@ export const batonRowSchema = z.object({
   continuedAgentId: z.string().optional(),
   continuedTitle: z.string().optional(),
   notice: z.string().optional(),
+  savedAt: z.number().optional(),
 });
 export type BatonRowData = z.infer<typeof batonRowSchema>;
 

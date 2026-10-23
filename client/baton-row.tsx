@@ -70,6 +70,7 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
           {data.path}
         </Text>
       </Pressable>
+      {data.savedAt ? <Text style={styles.hint}>Saved {new Date(data.savedAt).toLocaleString()}</Text> : null}
       {data.notice ? <Text style={styles.warning}>{data.notice}</Text> : null}
       {data.continuedAgentId ? (
         <>

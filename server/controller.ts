@@ -35,7 +35,14 @@ import { isMissing, loadState, nodeStoreIo, saveState, type BatonStoreIo } from 
 import { renderMechanicalHandoff } from "./timeline-summary";
 
 type AgentStatus = NonNullable<PaseoAgent["status"]>;
-type RowData = { agentId: string; path: string; continuedAgentId?: string; continuedTitle?: string; notice?: string };
+type RowData = {
+  agentId: string;
+  path: string;
+  continuedAgentId?: string;
+  continuedTitle?: string;
+  notice?: string;
+  savedAt?: number;
+};
 type BatonHandoffInfo = HandoffInfo;
 type TurnAgent = { id: string; workspaceId: string | null; cwd: string; parentAgentId: string | null };
 
@@ -947,6 +954,8 @@ export class BatonController {
     // place, while a later handoff for the same agent gets its own row instead of reusing the old one.
     const rowKey = this.entries.get(agentId)?.idleSince ?? 0;
     const continuedTitle = this.entries.get(agentId)?.continuedTitle;
+    const savedAt = this.entries.get(agentId)?.savedAt;
+    if (savedAt && !data.savedAt) data = { ...data, savedAt };
     if (continuedTitle && !data.continuedTitle) data = { ...data, continuedTitle };
     const notice = this.pathNotices.get(agentId);
     if (notice) data = { ...data, notice };

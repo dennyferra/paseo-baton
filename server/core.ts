@@ -37,7 +37,7 @@ export function markWriting(entry: BatonEntry, now: number): BatonEntry {
 }
 
 export function markDone(entry: BatonEntry, path: string, now: number): BatonEntry {
-  return transition(entry, { status: "done", path }, now);
+  return transition(entry, { status: "done", path, savedAt: now }, now);
 }
 
 export function markSkipped(entry: BatonEntry, now: number): BatonEntry {
