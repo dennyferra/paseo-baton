@@ -1,7 +1,7 @@
 import { useRpc, type PluginScreenProps } from "@getpaseo/plugin/client";
+import { Markdown } from "@getpaseo/plugin/client/ui";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { Markdown } from "./markdown";
 import { openHandoffRpc, readHandoffRpc } from "../shared/baton";
 
 export const HANDOFF_VIEW_SCREEN_ID = "baton-handoff";
@@ -39,7 +39,7 @@ export function HandoffViewScreen({ theme, layout, params }: PluginScreenProps) 
       {loaded.status === "error" ? <Text style={{ color: theme.colors.statusDanger }}>{loaded.message}</Text> : null}
       {loaded.status === "ready" ? (
         <View style={{ gap: 12 }}>
-          <Markdown source={loaded.content} theme={theme} compact={layout.compact} />
+          <Markdown>{loaded.content}</Markdown>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open the handoff file in its default app"

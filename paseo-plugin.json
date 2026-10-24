@@ -9,6 +9,6 @@
     "assets/baton-menu.png"
   ],
   "requirements": {
-    "paseo": ">=0.11.2"
+    "paseo": ">=0.13.0"
   }
 }
