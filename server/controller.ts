@@ -71,6 +71,9 @@ async function openFileWithOs(filePath: string): Promise<void> {
   }
 }
 
+const WRITER_READ_ATTEMPTS = 3;
+const WRITER_READ_RETRY_MS = 500;
+
 function idleDelayMs(settings: BatonSettings): number {
   return settings.idleDelayMinutes * 60_000;
 }
@@ -145,7 +148,9 @@ export class BatonController {
     this.busySubagents.delete(agent.id);
     await this.ensureRecovered(paseo);
     if (this.disposed) return;
-    this.lastTimeline.set(agent.id, timeline);
+    // Newer Paseo versions send an empty timeline here, so an empty one is read back when it is needed.
+    if (timeline.length > 0) this.lastTimeline.set(agent.id, timeline);
+    else this.lastTimeline.delete(agent.id);
     if (this.pendingHandoff.has(agent.id)) {
       await this.finalizeHandoff(agent.id, paseo);
       return;
@@ -154,7 +159,8 @@ export class BatonController {
       const originalAgentId = this.writerByAgentId.get(agent.id) ?? agent.id;
       this.writerByAgentId.delete(agent.id);
       this.writerAgentIds.delete(agent.id);
-      await this.finalizeHandoff(originalAgentId, paseo, extractHandoffDocument(timeline));
+      const document = timeline.length > 0 ? extractHandoffDocument(timeline) : await this.readWriterDocument(agent.id, paseo);
+      await this.finalizeHandoff(originalAgentId, paseo, document);
       await this.archiveAgent(paseo, agent.id);
       return;
     }
@@ -262,7 +268,7 @@ export class BatonController {
       throw new Error("This project is ignored in Baton settings.");
     }
     this.clearTimer(agentId);
-    if (!this.lastTimeline.has(agentId)) await this.loadTimeline(agentId, paseo);
+    await this.ensureTimeline(agentId, paseo);
     const entry = createPendingEntry({
       agentId,
       workspaceId: agent.workspaceId,
@@ -279,17 +285,32 @@ export class BatonController {
     return { started: true };
   }
 
-  // After a plugin reload there is no remembered turn, so read the recent conversation back.
-  private async loadTimeline(agentId: string, paseo: PaseoApi): Promise<void> {
+  // The writer's reply may not be in the timeline the instant its turn ends, so look a few times.
+  private async readWriterDocument(writerId: string, paseo: PaseoApi): Promise<string | null> {
+    for (let attempt = 0; attempt < WRITER_READ_ATTEMPTS; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, WRITER_READ_RETRY_MS));
+      const document = extractHandoffDocument(await this.fetchTimeline(writerId, paseo));
+      if (document) return document;
+    }
+    return null;
+  }
+
+  private async fetchTimeline(agentId: string, paseo: PaseoApi): Promise<AgentTimelineItem[]> {
     try {
       const page = await paseo.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: 200 });
-      this.lastTimeline.set(
-        agentId,
-        page.entries.map((entry) => entry.item),
-      );
+      return page.entries.map((entry) => entry.item);
     } catch (error: unknown) {
       this.log(`Reading the conversation for ${agentId} failed: ${String(error)}`);
+      return [];
     }
+  }
+
+  // Turn events may carry no conversation (always so on recent Paseo, and after a plugin reload),
+  // so read the recent conversation back when a handoff is about to be written.
+  private async ensureTimeline(agentId: string, paseo: PaseoApi): Promise<void> {
+    if ((this.lastTimeline.get(agentId)?.length ?? 0) > 0) return;
+    const items = await this.fetchTimeline(agentId, paseo);
+    if (items.length > 0) this.lastTimeline.set(agentId, items);
   }
 
   async setEnabled(
@@ -739,6 +760,7 @@ export class BatonController {
       throw new Error(`Invalid handoff writer model "${providerModel}"; expected provider/model format.`);
     }
     if (!entry.workspaceId) throw new Error("No workspace for handoff writer.");
+    await this.ensureTimeline(entry.agentId, paseo);
     const draft = renderMechanicalHandoff({
       agentId: entry.agentId,
       workspaceId: entry.workspaceId,
@@ -800,6 +822,7 @@ export class BatonController {
     const handoffPath = await this.pathForEntry(entry, paseo);
     if (!handoffPath) throw new Error(`Cannot resolve handoff path for ${entry.agentId}`);
     await this.io.mkdir(path.dirname(handoffPath));
+    await this.ensureTimeline(entry.agentId, paseo);
     const timeline = this.lastTimeline.get(entry.agentId) ?? [];
     const cwd = entry.cwd ?? path.dirname(path.dirname(handoffPath));
     const content = renderMechanicalHandoff({

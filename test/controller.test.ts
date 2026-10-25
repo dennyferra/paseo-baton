@@ -59,7 +59,7 @@ function settings(overrides: Partial<BatonSettings> = {}) {
   };
 }
 
-function stubPaseo(opts: { createId?: string } = {}) {
+function stubPaseo(opts: { createId?: string; history?: Record<string, unknown[]> } = {}) {
   const createId = opts.createId ?? "agent-continued";
   const calls: string[] = [];
   const created: Array<Record<string, unknown>> = [];
@@ -85,7 +85,7 @@ function stubPaseo(opts: { createId?: string } = {}) {
           return { archivedAt: new Date().toISOString() };
         },
         timeline: {
-          refetch: async () => ({ entries: [] }),
+          refetch: async () => ({ entries: (opts.history?.[agentId] ?? []).map((item) => ({ item })) }),
           append: async (item: Record<string, unknown>) => {
             calls.push(`append:${agentId}`);
             appended.push(item);
@@ -765,6 +765,46 @@ describe("BatonController", () => {
     const row = appended.find((item) => item.kind === "baton-ready");
     expect((row?.data as { notice?: string }).notice).toContain("EACCES: permission denied");
     expect((row?.data as { path: string }).path).toBe(HANDOFF_PATH);
+    await controller.dispose();
+  });
+
+  it("reads the conversation back when turn events carry none", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({
+        "agent-a": {
+          agentId: "agent-a",
+          workspaceId: "wks-a",
+          cwd: "/work",
+          idleSince: NOW - 60_000,
+          fireAt: NOW,
+          deadline: NOW + 60_000,
+          updatedAt: NOW - 60_000,
+          status: "pending",
+        },
+      }),
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo, calls, created } = stubPaseo({
+      createId: "writer-1",
+      history: {
+        "agent-a": [{ type: "user_message", text: "Fix the login bug" }],
+        "writer-1": [{ type: "assistant_message", text: "# Task\nFix the login bug\n" }],
+      },
+    });
+    await controller.ensureRecovered(paseo as never);
+    for (let tries = 0; tries < 50 && !calls.includes("create:wks-a"); tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(String(created[0].prompt)).toContain("Fix the login bug");
+    await controller.onTurnEnded({ id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+    expect(io.files.get(HANDOFF_PATH)).toContain("# Task\nFix the login bug");
+    expect(io.files.get(HANDOFF_PATH)).not.toContain("Not captured");
     await controller.dispose();
   });
 

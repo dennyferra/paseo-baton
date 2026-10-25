@@ -1,7 +1,6 @@
 import { useSettings, usePaseo, type PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { SettingsCard, SettingsInput, SettingsSwitch } from "@getpaseo/plugin/client/ui";
+import { SettingsCard, SettingsInput, SettingsSwitch, useToast } from "@getpaseo/plugin/client/ui";
 import type { PaseoApi } from "@getpaseo/client";
-import { useToast } from "@getpaseo/plugin/client/react-native";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { BatonSettings } from "../shared/baton";

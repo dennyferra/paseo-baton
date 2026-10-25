@@ -116,7 +116,7 @@ Layout:
 - `client/` - Baton chip, chat row, handoff viewer and settings screen (app side)
 - `shared/` - Zod contracts, RPCs and settings shared by both sides; no runtime code from either side
 - `docs/` - maintainer notes, such as the registry submission text (not shipped in the package)
-- `test/` - Vitest tests for the controller, core state machine, store, summaries and markdown parser
+- `test/` - Vitest tests for the controller, core state machine, store and summaries
 
 Server code must not import client code, and the reverse.
 
