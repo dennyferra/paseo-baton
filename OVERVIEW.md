@@ -75,11 +75,12 @@ Settings live under Settings -> Plugins -> Baton.
 ## Data
 
 Writing a handoff sends part of the conversation to an agent provider. The writer agent receives a
-draft built from the conversation Paseo reports when a turn ends: the last 30 messages (each cut at
+draft built from the agent's recent conversation, which Baton reads back from Paseo when it writes the handoff: the last 30 messages (each cut at
 2,000 characters), the files the agent touched, and a short list of its tool calls with their targets,
 such as file paths and URLs. Tool output is not included. The writer runs on the provider and model of the profile you pick, or on the idle agent's
-own provider and model by default, so that provider sees this text. If the writer fails, the
-fallback summary is built locally and nothing is sent.
+own provider and model by default, so that provider sees this text. If the writer fails or times
+out, Baton builds a fallback summary locally and makes no further model call, but a failed writer
+attempt may already have sent the draft to its provider.
 
 Each handoff file starts with a `Created:` timestamp, and the "Handoff saved" row shows when it was
 saved.
