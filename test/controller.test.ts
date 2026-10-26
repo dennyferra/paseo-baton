@@ -59,14 +59,14 @@ function settings(overrides: Partial<BatonSettings> = {}) {
   };
 }
 
-function stubPaseo(opts: { createId?: string; history?: Record<string, unknown[]> } = {}) {
+function stubPaseo(opts: { createId?: string; history?: Record<string, unknown[]>; thinkingOptionId?: string } = {}) {
   const createId = opts.createId ?? "agent-continued";
   const calls: string[] = [];
   const created: Array<Record<string, unknown>> = [];
   const appended: Array<Record<string, unknown>> = [];
   const archived: string[] = [];
-  const agents: Array<{ id: string; status: string; provider: string; model: string | null; workspaceId: string }> = [
-    { id: "agent-a", status: "idle", provider: "claude", model: "claude-sonnet-5-5", workspaceId: "wks-a" },
+  const agents: Array<{ id: string; status: string; provider: string; model: string | null; workspaceId: string; thinkingOptionId?: string | null }> = [
+    { id: "agent-a", status: "idle", provider: "claude", model: "claude-sonnet-5-5", workspaceId: "wks-a", thinkingOptionId: opts.thinkingOptionId ?? null },
   ];
   const paseo = {
     agents: {
@@ -405,6 +405,42 @@ describe("BatonController", () => {
     controller.onTurnStarted({ id: "agent-a" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(io.files.has(HANDOFF_PATH)).toBe(true);
+    await controller.dispose();
+  });
+
+  it("continues the handoff with the source agent's current effort level", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\nFix the bug\n",
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo, created } = stubPaseo({ thinkingOptionId: "high" });
+    await controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never);
+    expect(created[0].config).toEqual({ provider: "claude/claude-sonnet-5-5", thinkingOptionId: "high" });
+    await controller.dispose();
+  });
+
+  it("continues the handoff at the provider default when the source agent has no effort set", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\nFix the bug\n",
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo, created } = stubPaseo();
+    await controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never);
+    expect(created[0].config).toEqual({ provider: "claude/claude-sonnet-5-5" });
     await controller.dispose();
   });
 

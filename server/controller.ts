@@ -391,8 +391,9 @@ export class BatonController {
         `Cannot determine a provider/model for agent ${input.agentId}; provider=${source.agent.provider}, model=${source.agent.model ?? "none"}.`,
       );
     }
+    const thinkingOptionId = source.agent.thinkingOptionId ?? null;
     const created = await paseo.workspaces.ref(workspaceId).agents.create({
-      config: { provider: configProvider },
+      config: thinkingOptionId ? { provider: configProvider, thinkingOptionId } : { provider: configProvider },
       title: `[Handoff] ${title}`,
       prompt: `Read ${entry.path} and continue the task.`,
     });
