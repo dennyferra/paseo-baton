@@ -89,7 +89,7 @@ draft that Baton builds from the agent's conversation, which it reads back from 
 handoff: the first request, the user's messages and the agent's replies (long ones keep their start and
 end, within the size set by Conversation detail, with the oldest dropped first), the files the agent
 touched, a short list of its recent tool calls that name a file, URL or label (repeats are counted, and shell
-commands are only counted, never listed), and, unless you turn it off, the repo state. When a session was
+commands are left out), and, unless you turn it off, the repo state. When a session was
 started with Continue from handoff, its first message only points to the handoff file, so Baton also includes
 that handoff's text. Tool output is not included. Baton gathers the repo state itself with
 read-only `git` commands (`branch --show-current`, `status --short`, `log -n 8`) in the workspace, with

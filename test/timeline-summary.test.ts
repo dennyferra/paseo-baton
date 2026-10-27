@@ -234,7 +234,7 @@ describe("toolSummaries noise", () => {
     detail: detail as never,
   });
 
-  it("folds repeats into a count, drops the status of completed calls and counts unnamed ones", () => {
+  it("folds repeats into a count, drops the status of completed calls and leaves out unnamed ones", () => {
     const items = timeline([
       call("1", "bash", { type: "shell", command: "pytest" }),
       call("2", "read", { type: "read", filePath: "Dockerfile" }),
@@ -246,7 +246,6 @@ describe("toolSummaries noise", () => {
     expect(toolSummaries(items)).toEqual([
       "- read Dockerfile (x2)",
       "- write scripts/local_eval.py",
-      "- 3 bash calls (no details recorded)",
     ]);
   });
 

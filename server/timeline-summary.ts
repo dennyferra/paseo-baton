@@ -62,11 +62,10 @@ function isToolCall(item: AgentTimelineItem): item is ToolCallTimelineItem {
 /**
  * What the agent did that left a trace: tool calls that name a file, URL or label, repeats folded into a count,
  * the most recent ones up to the limit. A call only gets a status when it did not complete. Calls with nothing
- * to name, such as shell commands, say nothing useful one by one, so they are counted in a closing line.
+ * to name, such as shell commands, say nothing useful, so they are left out.
  */
 export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40): string[] {
   const named = new Map<string, number>();
-  const unnamed = new Map<string, number>();
   for (const item of timeline) {
     if (!isToolCall(item)) continue;
     const detail = item.detail;
@@ -80,18 +79,13 @@ export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40
     } else if (detail.type === "plain_text" && detail.label) {
       target = ` ${detail.label}`;
     }
-    if (!target) {
-      unnamed.set(item.name, (unnamed.get(item.name) ?? 0) + 1);
-      continue;
-    }
+    if (!target) continue;
     const line = `- ${item.name}${target}${item.status === "completed" ? "" : ` (${item.status})`}`;
     const count = named.get(line) ?? 0;
     named.delete(line); // a repeat moves to the end, so the list stays in order of last use
     named.set(line, count + 1);
   }
-  const lines = [...named].map(([line, count]) => (count > 1 ? `${line} (x${count})` : line)).slice(-limit);
-  for (const [name, count] of unnamed) lines.push(`- ${count} ${name} call${count === 1 ? "" : "s"} (no details recorded)`);
-  return lines;
+  return [...named].map(([line, count]) => (count > 1 ? `${line} (x${count})` : line)).slice(-limit);
 }
 
 const MAX_FILES = 100;
