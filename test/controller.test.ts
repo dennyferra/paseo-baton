@@ -913,11 +913,12 @@ describe("BatonController", () => {
     });
 
     async function run(overrides: Partial<BatonSettings>) {
+      const logs: string[] = [];
       const io = memoryIo({ [STATE_FILE]: pendingState });
       const controller = new BatonController({
         dataDir: "/home/.paseo/plugin-data/baton",
         settings: settings(overrides),
-        log: () => {},
+        log: (message) => logs.push(message),
         io,
         now: () => NOW,
       });
@@ -947,12 +948,14 @@ describe("BatonController", () => {
         stub.paseo as never,
       );
       await controller.dispose();
-      return { ...stub, refetches: () => refetches };
+      return { ...stub, logs, refetches: () => refetches };
     }
 
     it("reads as many pages as the detail level allows and warns when history was cut", async () => {
       const compact = await run({ conversationDetail: "compact" });
       expect(compact.refetches()).toBe(5);
+      expect(compact.logs).toContain("Read 5 timeline entries for agent-a (compact detail, up to 5 pages, older history left out)");
+      expect(compact.logs.some((message) => /^Handoff draft for agent-a is \d+ characters$/.test(message))).toBe(true);
       expect(String(compact.created[0].prompt)).toContain("Earlier history was not read");
       const row = compact.appended.find((item) => item.kind === "baton-ready");
       expect((row?.data as { notice?: string }).notice).toContain("Earlier history was cut");

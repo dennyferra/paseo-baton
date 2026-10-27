@@ -333,6 +333,9 @@ export class BatonController {
     const pages = Math.ceil(DETAIL_LIMITS[settings.conversationDetail].historyEntries / TIMELINE_PAGE_SIZE);
     const { items, cut } = await this.fetchTimeline(agentId, paseo, pages);
     if (items.length > 0) this.lastTimeline.set(agentId, { items, cut });
+    this.log(
+      `Read ${items.length} timeline entries for ${agentId} (${settings.conversationDetail} detail, up to ${pages} pages, ${cut ? "older history left out" : "whole history"})`,
+    );
   }
 
   /** The machine draft: what Baton knows of the conversation, within the configured detail level. */
@@ -341,7 +344,7 @@ export class BatonController {
     await this.ensureTimeline(entry.agentId, paseo, settings);
     const conversation = this.lastTimeline.get(entry.agentId);
     const cwd = entry.cwd ?? path.dirname(path.dirname(handoffPath));
-    return renderMechanicalHandoff({
+    const draft = renderMechanicalHandoff({
       agentId: entry.agentId,
       workspaceId: entry.workspaceId,
       cwd,
@@ -352,6 +355,8 @@ export class BatonController {
       historyCut: conversation?.cut ?? false,
       repoFacts: settings.includeRepoState ? await gatherRepoFacts(cwd) : "",
     });
+    this.log(`Handoff draft for ${entry.agentId} is ${draft.length} characters`);
+    return draft;
   }
 
   async setEnabled(
