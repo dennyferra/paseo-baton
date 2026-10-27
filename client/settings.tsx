@@ -63,6 +63,15 @@ function describeProfile(profile: DaemonProfile, snapshot: ProviderSnapshot | nu
 /** How long after the last change the settings are saved, so typing in a field saves once. */
 const AUTOSAVE_DELAY_MS = 800;
 
+/** JSON with sorted keys, so two copies of the same settings compare equal whatever order their keys came in. */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    inner && typeof inner === "object" && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+      : inner,
+  );
+}
+
 function clampInt(value: string, fallback: number, max: number): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -80,32 +89,37 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   /** The draft that last failed to save; it is not retried until the user changes something. */
   const [failedDraft, setFailedDraft] = useState<string | null>(null);
-  const latestSettings = useRef(settings);
-  latestSettings.current = settings;
-
-  const savedJson = settings.status === "ready" ? JSON.stringify(settings.values) : null;
+  const savedJson = settings.status === "ready" ? stableJson(settings.values) : null;
   const revision = settings.status === "ready" ? settings.revision : null;
+  const draftJson = draft === null ? null : stableJson(draft);
+
+  // The timer below runs later, so it reads the newest values from here instead of the render that set it.
+  const latest = useRef({ draft, settings, toast });
+  useEffect(() => {
+    latest.current = { draft, settings, toast };
+  });
 
   // Changes are saved on their own shortly after the last edit.
   useEffect(() => {
-    if (draft === null || savedJson === null || settings.saving) return;
-    const draftJson = JSON.stringify(draft);
+    if (draftJson === null || savedJson === null || settings.saving) return;
     if (draftJson === savedJson || draftJson === failedDraft) return;
     const timer = setTimeout(() => {
       void (async () => {
-        const current = latestSettings.current;
-        if (current.status !== "ready") return;
-        if (await current.save(draft, current.revision)) {
+        const { draft: toSave, settings: current } = latest.current;
+        // A save already running re-arms this effect when it finishes.
+        if (!toSave || current.status !== "ready" || current.saving) return;
+        const savedDraft = stableJson(toSave);
+        if (await current.save(toSave, current.revision)) {
           setFailedDraft(null);
           await current.reload();
         } else {
-          setFailedDraft(draftJson);
-          toast.error("Could not save Baton settings");
+          setFailedDraft(savedDraft);
+          latest.current.toast.error("Could not save Baton settings");
         }
       })();
     }, AUTOSAVE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [draft, savedJson, revision, settings.saving, failedDraft]);
+  }, [draftJson, savedJson, revision, settings.saving, failedDraft]);
 
   useEffect(() => {
     if (draft !== null) return;
@@ -265,8 +279,8 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     update({ ignoredWorkspaceIds: ignored ? [...rest, id] : rest });
   };
 
-  const dirty = savedJson !== null && JSON.stringify(draft) !== savedJson;
-  const failed = dirty && JSON.stringify(draft) === failedDraft;
+  const dirty = savedJson !== null && draftJson !== savedJson;
+  const failed = dirty && draftJson === failedDraft;
   const saveStatus = failed ? "Could not save. Change a setting to try again." : dirty || settings.saving ? "Saving..." : "All changes saved";
 
   return (

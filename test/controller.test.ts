@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../server/repo-facts", () => ({ gatherRepoFacts: async () => "Branch: main" }));
 import type { BatonStoreIo } from "../server/store";
 import { BatonController } from "../server/controller";
-import { batonStateSchema, DEFAULT_SETTINGS, SUBAGENT_WAIT_LIMIT_MS, type BatonSettings } from "../shared/baton";
+import { batonStateSchema, DEFAULT_SETTINGS, HANDOFF_FALLBACK_TIMEOUT_MS, SUBAGENT_WAIT_LIMIT_MS, type BatonSettings } from "../shared/baton";
 
 const NOW = 1_000_000;
 const HANDOFF_PATH = "/work/.paseo/handoffs/agent-a.md";
@@ -375,6 +375,22 @@ describe("BatonController", () => {
     await controller.dispose();
   });
 
+  it("removes the saved writer prompt along with an uncontinued handoff", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\n\nx",
+      [PROMPT_FILE]: "prompt with conversation text",
+    });
+    const controller = makeController(io);
+    const { paseo } = stubPaseo();
+    await controller.ensureRecovered(paseo as never);
+    controller.onTurnStarted({ id: "agent-a" });
+    await waitFor(() => !io.files.has(PROMPT_FILE));
+    expect(io.files.has(HANDOFF_PATH)).toBe(false);
+    expect(io.files.has(PROMPT_FILE)).toBe(false);
+    await controller.dispose();
+  });
+
   it("reads a saved handoff for review and rejects unknown paths", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
@@ -663,6 +679,8 @@ describe("BatonController", () => {
         "/work/.paseo/handoffs/old.md": "x",
         "/work/.paseo/handoffs/fresh.md": "x",
         "/work/.paseo/handoffs/continued.md": "x",
+        "/home/.paseo/plugin-data/baton/writer-prompts/old.md": "prompt",
+        "/home/.paseo/plugin-data/baton/writer-prompts/fresh.md": "prompt",
       });
       const controller = new BatonController({
         dataDir: "/home/.paseo/plugin-data/baton",
@@ -684,6 +702,9 @@ describe("BatonController", () => {
       expect(io.files.has("/work/.paseo/handoffs/fresh.md")).toBe(true);
       expect(io.files.has("/work/.paseo/handoffs/continued.md")).toBe(true);
       expect(Object.keys(state).sort()).toEqual(["continued", "fresh"]);
+      // The saved writer prompt holds conversation text, so it goes with its handoff.
+      expect(io.files.has("/home/.paseo/plugin-data/baton/writer-prompts/old.md")).toBe(false);
+      expect(io.files.has("/home/.paseo/plugin-data/baton/writer-prompts/fresh.md")).toBe(true);
     });
 
     it("never deletes a file that is not the agent's own handoff", async () => {
@@ -1020,7 +1041,7 @@ describe("BatonController", () => {
   describe("a writer that saves the file itself", () => {
     const writerTurn = { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null };
 
-    async function run(files: Record<string, string>, writerReply: string) {
+    async function run(files: Record<string, string>, writerReply: string, options: { failUnlink?: boolean } = {}) {
       const io = memoryIo({
               [STATE_FILE]: JSON.stringify({
                 "agent-a": {
@@ -1036,6 +1057,11 @@ describe("BatonController", () => {
               }),
         ...files,
       });
+      if (options.failUnlink) {
+        io.unlink = async (file: string) => {
+          if (file === HANDOFF_PATH) throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+        };
+      }
       const controller = new BatonController({
         dataDir: "/home/.paseo/plugin-data/baton",
         settings: settings(),
@@ -1043,10 +1069,10 @@ describe("BatonController", () => {
         io,
         now: () => NOW,
       });
-      const { paseo, created } = stubPaseo({ createId: "writer-1", history: { "agent-a": [{ type: "user_message", text: "Fix the login bug" }] } });
-      await controller.ensureRecovered(paseo as never);
-      await waitFor(() => created.length > 0);
-      return { controller, io, paseo, writerReply };
+      const stub = stubPaseo({ createId: "writer-1", history: { "agent-a": [{ type: "user_message", text: "Fix the login bug" }] } });
+      await controller.ensureRecovered(stub.paseo as never);
+      await waitFor(() => stub.created.length > 0 || options.failUnlink === true);
+      return { controller, io, paseo: stub.paseo, writerReply };
     }
 
     it("stamps the file the writer saved when its reply is only a confirmation", async () => {
@@ -1058,6 +1084,59 @@ describe("BatonController", () => {
       expect(io.files.get(HANDOFF_PATH)).toContain("Fix the login bug");
       expect(io.files.get(HANDOFF_PATH)).not.toContain("Generated:");
       await controller.dispose();
+    });
+
+    it("falls back to the summary when an old handoff cannot be cleared, instead of stamping the old one", async () => {
+      const { controller, io } = await run({ [HANDOFF_PATH]: "# Task\nOLD STALE HANDOFF\n" }, "unused", { failUnlink: true });
+      await waitFor(() => !String(io.files.get(HANDOFF_PATH)).includes("OLD STALE HANDOFF"));
+      expect(io.files.get(HANDOFF_PATH)).not.toContain("OLD STALE HANDOFF");
+      expect(io.files.get(HANDOFF_PATH)).toContain("Fix the login bug");
+      expect(io.files.get(HANDOFF_PATH)).not.toContain("Created:");
+      await controller.dispose();
+    });
+
+    it("stops tracking a writer that never finishes, archives it and ignores its late reply", async () => {
+      vi.useFakeTimers();
+      try {
+        const io = memoryIo({
+          [STATE_FILE]: JSON.stringify({
+            "agent-a": {
+              agentId: "agent-a",
+              workspaceId: "wks-a",
+              cwd: "/work",
+              idleSince: NOW - 60_000,
+              fireAt: NOW,
+              deadline: NOW + 60_000,
+              updatedAt: NOW - 60_000,
+              status: "pending",
+            },
+          }),
+        });
+        const controller = new BatonController({
+          dataDir: "/home/.paseo/plugin-data/baton",
+          settings: settings(),
+          log: () => {},
+          io,
+          now: () => NOW,
+        });
+        const stub = stubPaseo({ createId: "writer-1", history: { "agent-a": [{ type: "user_message", text: "Fix the login bug" }] } });
+        await controller.ensureRecovered(stub.paseo as never);
+        await vi.advanceTimersByTimeAsync(10);
+        expect(stub.created).toHaveLength(1);
+        controller.onTurnStarted({ id: "writer-1", parentAgentId: "agent-a" });
+        await vi.advanceTimersByTimeAsync(HANDOFF_FALLBACK_TIMEOUT_MS + 1_000);
+        expect(stub.archived).toContain("writer-1");
+        expect(io.files.get(HANDOFF_PATH)).toContain("Fix the login bug");
+        await controller.onTurnEnded(
+          { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: "agent-a" },
+          [{ type: "assistant_message", text: "# Task\nLATE REPLY" }],
+          stub.paseo as never,
+        );
+        expect(io.files.get(HANDOFF_PATH)).not.toContain("LATE REPLY");
+        await controller.dispose();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("does not mistake a handoff left by an earlier run for the writer's", async () => {

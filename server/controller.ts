@@ -167,8 +167,7 @@ export class BatonController {
     }
     if (this.writerByAgentId.has(agent.id)) {
       const originalAgentId = this.writerByAgentId.get(agent.id) ?? agent.id;
-      this.writerByAgentId.delete(agent.id);
-      this.writerAgentIds.delete(agent.id);
+      this.forgetWriter(agent.id);
       const document = timeline.length > 0 ? extractHandoffDocument(timeline) : await this.readWriterDocument(agent.id, paseo);
       await this.finalizeHandoff(originalAgentId, paseo, document);
       await this.logWriterUsage(originalAgentId, agent.id, paseo);
@@ -195,7 +194,7 @@ export class BatonController {
     this.persistEntries();
     // The user kept working in this session, so a handoff nobody continued is stale.
     if (entry.status === "done" && entry.path && !entry.continuedAgentId) {
-      void this.removeStaleHandoff(entry.path);
+      void this.removeStaleHandoff(entry.agentId, entry.path);
     }
   }
 
@@ -240,16 +239,18 @@ export class BatonController {
           continue;
         }
       }
+      await this.removeWriterPrompt(entry.agentId);
       removed += 1;
     }
     if (removed > 0) await this.persistEntries();
     return removed;
   }
 
-  private async removeStaleHandoff(handoffPath: string): Promise<void> {
+  private async removeStaleHandoff(agentId: string, handoffPath: string): Promise<void> {
     try {
       if (!(await this.readSettings()).deleteStaleHandoffs) return;
       await this.io.unlink(handoffPath);
+      await this.removeWriterPrompt(agentId);
     } catch (error: unknown) {
       this.log(`Removing stale handoff ${handoffPath} failed: ${String(error)}`);
     }
@@ -340,8 +341,7 @@ export class BatonController {
   }
 
   /** The machine draft: what Baton knows of the conversation, within the configured detail level. */
-  private async buildDraft(entry: BatonEntry, handoffPath: string, paseo: PaseoApi): Promise<string> {
-    const settings = await this.readSettings();
+  private async buildDraft(entry: BatonEntry, handoffPath: string, paseo: PaseoApi, settings: BatonSettings): Promise<string> {
     await this.ensureTimeline(entry.agentId, paseo, settings);
     const conversation = this.lastTimeline.get(entry.agentId);
     const cwd = entry.cwd ?? path.dirname(path.dirname(handoffPath));
@@ -730,18 +730,22 @@ export class BatonController {
       this.markSkippedEntry(agentId);
       return;
     }
+    let staleFileKept = false;
     try {
       await this.io.mkdir(path.dirname(handoffPath));
       // A file left by an earlier handoff must not be mistaken for one the writer saved itself.
       await this.io.unlink(handoffPath).catch((error: unknown) => {
-        if (!isMissing(error)) throw error;
+        if (!isMissing(error)) {
+          staleFileKept = true;
+          throw error;
+        }
       });
       const settings = await this.readSettings();
       const writer =
         (await this.profileProviderModel(paseo, settings.handoffProfileId)) ??
         (await this.agentProviderModel(paseo, agentId));
       if (writer && writer.providerModel.includes("/")) {
-        await this.spawnHandoffWriter(entry, handoffPath, writer, paseo);
+        await this.spawnHandoffWriter(entry, handoffPath, writer, paseo, settings);
       } else {
         this.log(`fire agent=${agentId} no writer model, using mechanical fallback`);
         const path = await this.writeMechanical(entry, paseo);
@@ -757,7 +761,7 @@ export class BatonController {
         return;
       }
     } catch (error: unknown) {
-      await this.finalizeHandoff(agentId, paseo);
+      await this.finalizeHandoff(agentId, paseo, null, !staleFileKept);
       this.log(`Handoff prompt for ${agentId} failed, wrote mechanical fallback: ${String(error)}`);
       return;
     }
@@ -806,15 +810,16 @@ export class BatonController {
     handoffPath: string,
     writerModel: { providerModel: string; thinkingOptionId: string | null },
     paseo: PaseoApi,
+    settings: BatonSettings,
   ): Promise<void> {
     const { providerModel, thinkingOptionId } = writerModel;
     if (!providerModel.includes("/")) {
       throw new Error(`Invalid handoff writer model "${providerModel}"; expected provider/model format.`);
     }
     if (!entry.workspaceId) throw new Error("No workspace for handoff writer.");
-    const draft = await this.buildDraft(entry, handoffPath, paseo);
+    const draft = await this.buildDraft(entry, handoffPath, paseo, settings);
     const prompt = buildWriterHandoffPrompt(draft);
-    await this.savePromptForDebugging(entry.agentId, prompt);
+    if (settings.saveWriterPrompts) await this.savePromptForDebugging(entry.agentId, prompt);
     const writer = await paseo.workspaces.ref(entry.workspaceId).agents.create({
       config: thinkingOptionId ? { provider: providerModel, thinkingOptionId } : { provider: providerModel },
       title: BATON_WRITER_TITLE,
@@ -827,9 +832,15 @@ export class BatonController {
     this.writerByAgentId.set(writer.id, entry.agentId);
   }
 
+  /** The saved writer prompt holds conversation text, so it goes when its handoff does. */
+  private async removeWriterPrompt(agentId: string): Promise<void> {
+    await this.io.unlink(writerPromptFile(this.dataDir, agentId)).catch((error: unknown) => {
+      if (!isMissing(error)) this.log(`Removing the saved writer prompt for ${agentId} failed: ${String(error)}`);
+    });
+  }
+
   /** Keeps the writer's prompt, the latest one per agent, for people checking what the writer was given. */
   private async savePromptForDebugging(agentId: string, prompt: string): Promise<void> {
-    if (!(await this.readSettings()).saveWriterPrompts) return;
     const file = writerPromptFile(this.dataDir, agentId);
     try {
       await this.io.mkdir(dirname(file));
@@ -840,7 +851,13 @@ export class BatonController {
     }
   }
 
-  private async finalizeHandoff(agentId: string, paseo: PaseoApi, document: string | null = null): Promise<void> {
+  /** `useSavedFile` is false when an old file could not be cleared, so it must not pass for the new handoff. */
+  private async finalizeHandoff(
+    agentId: string,
+    paseo: PaseoApi,
+    document: string | null = null,
+    useSavedFile = true,
+  ): Promise<void> {
     this.clearFallbackTimer(agentId);
     this.pendingHandoff.delete(agentId);
     const entry = this.entries.get(agentId);
@@ -850,9 +867,7 @@ export class BatonController {
       this.markSkippedEntry(agentId);
       return;
     }
-    // The writer's reply is the document. A writer that saved the file itself and replied with only a
-    // confirmation is accepted too, so either way Baton ends up stamping a real handoff.
-    const saved = (document && (await this.saveWriterDocument(agentId, handoffPath, document))) || (await this.stampSavedFile(agentId, handoffPath));
+    const saved = await this.saveHandoffFile(agentId, handoffPath, document, useSavedFile);
     const path = saved ? handoffPath : await this.writeMechanical(entry, paseo);
     const done = markDone(entry, path, this.now());
     this.entries.set(agentId, done);
@@ -864,26 +879,34 @@ export class BatonController {
     });
   }
 
-  private async saveWriterDocument(agentId: string, handoffPath: string, document: string): Promise<boolean> {
+  /**
+   * Stamps and saves the handoff. The writer's reply is the document. A writer that saved the file itself and
+   * replied with only a confirmation is accepted too. False when neither is usable.
+   */
+  private async saveHandoffFile(
+    agentId: string,
+    handoffPath: string,
+    document: string | null,
+    useSavedFile: boolean,
+  ): Promise<boolean> {
+    if (document && (await this.writeStamped(agentId, handoffPath, document))) return true;
+    if (!useSavedFile) return false;
     try {
-      await this.io.mkdir(dirname(handoffPath));
-      await this.io.writeFile(handoffPath, stampHandoffDocument(document, this.now()));
-      return true;
+      const text = await this.io.readFile(handoffPath);
+      return isHandoffDocument(text) && (await this.writeStamped(agentId, handoffPath, text));
     } catch (error: unknown) {
-      this.log(`Writing handoff document for ${agentId} failed: ${String(error)}`);
+      if (!isMissing(error)) this.log(`Reading the handoff file for ${agentId} failed: ${String(error)}`);
       return false;
     }
   }
 
-  /** Adds the Created line to a handoff file the writer saved itself. False when there is no usable file. */
-  private async stampSavedFile(agentId: string, handoffPath: string): Promise<boolean> {
+  private async writeStamped(agentId: string, handoffPath: string, text: string): Promise<boolean> {
     try {
-      const text = await this.io.readFile(handoffPath);
-      if (!isHandoffDocument(text)) return false;
+      await this.io.mkdir(dirname(handoffPath));
       await this.io.writeFile(handoffPath, stampHandoffDocument(text, this.now()));
       return true;
     } catch (error: unknown) {
-      if (!isMissing(error)) this.log(`Reading the handoff file for ${agentId} failed: ${String(error)}`);
+      this.log(`Writing the handoff for ${agentId} failed: ${String(error)}`);
       return false;
     }
   }
@@ -892,7 +915,7 @@ export class BatonController {
     const handoffPath = await this.pathForEntry(entry, paseo);
     if (!handoffPath) throw new Error(`Cannot resolve handoff path for ${entry.agentId}`);
     await this.io.mkdir(path.dirname(handoffPath));
-    const content = await this.buildDraft(entry, handoffPath, paseo);
+    const content = await this.buildDraft(entry, handoffPath, paseo, await this.readSettings());
     await this.io.writeFile(handoffPath, content);
     return handoffPath;
   }
@@ -930,6 +953,11 @@ export class BatonController {
       const paseo = this.paseo;
       if (!paseo) return;
       void (async () => {
+        // The writer is not coming back in time: stop tracking it so a late reply cannot replace this handoff.
+        for (const writerId of this.writersOf(agentId)) {
+          this.forgetWriter(writerId);
+          await this.archiveAgent(paseo, writerId);
+        }
         const handoffPath = await this.writeMechanical(entry, paseo);
         const done = markDone(entry, handoffPath, this.now());
         this.entries.set(agentId, done);
@@ -966,6 +994,21 @@ export class BatonController {
     this.lastTimeline.delete(agentId);
     this.writerAgentIds.delete(agentId);
     this.writerByAgentId.delete(agentId);
+    // Paseo archives a parent's subagents with it, so a writer still running will never report back.
+    for (const writerId of this.writersOf(agentId)) this.forgetWriter(writerId);
+  }
+
+  /** The writer agents working for an idle agent. */
+  private writersOf(agentId: string): string[] {
+    return [...this.writerByAgentId].filter(([, owner]) => owner === agentId).map(([writerId]) => writerId);
+  }
+
+  /** Stops tracking a writer agent, including its place in the subagent-wait bookkeeping. */
+  private forgetWriter(writerId: string): void {
+    this.writerByAgentId.delete(writerId);
+    this.writerAgentIds.delete(writerId);
+    this.busySubagents.delete(writerId);
+    this.parentOf.delete(writerId);
   }
 
   /** Logs the writer's last model call, which shows how big its context was and what the handoff cost. */

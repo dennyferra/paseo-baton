@@ -22,7 +22,7 @@ Its menu once a handoff exists, with turning handoffs off disabled:
   `<agentId>.md` to `.paseo/handoffs` in the agent's workspace (or your custom location) (Task, Context, Relevant files, Current
   state, What was tried, Decisions, Acceptance criteria, Constraints).
 - **Writer subagent.** A `[Handoff writer]` subagent of the idle agent drafts the document and is
-  archived after its turn. It shows under that agent's subagents and Paseo does not send a
+  archived after its turn. It shows under that agent's subagents while it runs and Paseo does not send a
   "finished" notification for it, and the idle agent's chat only gains a "Handoff saved" row. If the writer fails, Baton
   falls back to a mechanical summary of the conversation, with no model call.
 - **Review in the app.** Clicking the saved path opens the handoff rendered as markdown, with a
