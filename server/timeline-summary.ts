@@ -65,7 +65,7 @@ function isToolCall(item: AgentTimelineItem): item is ToolCallTimelineItem {
  * to name, such as shell commands, say nothing useful, so they are left out.
  */
 export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40): string[] {
-  const named = new Map<string, number>();
+  const lines: string[] = [];
   for (const item of timeline) {
     if (!isToolCall(item)) continue;
     const detail = item.detail;
@@ -80,15 +80,93 @@ export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40
       target = ` ${detail.label}`;
     }
     if (!target) continue;
-    const line = `- ${item.name}${target}${item.status === "completed" ? "" : ` (${item.status})`}`;
-    const count = named.get(line) ?? 0;
-    named.delete(line); // a repeat moves to the end, so the list stays in order of last use
-    named.set(line, count + 1);
+    lines.push(`- ${item.name}${target}${item.status === "completed" ? "" : ` (${item.status})`}`);
   }
-  return [...named].map(([line, count]) => (count > 1 ? `${line} (x${count})` : line)).slice(-limit);
+  return foldRecent(lines, limit);
 }
 
 const MAX_FILES = 100;
+const MAX_TODO_ITEMS = 40;
+const MAX_FAILURES = 10;
+const MAX_SUB_AGENTS = 10;
+const MAX_ERROR_CHARS = 300;
+const MAX_SUB_AGENT_CHARS = 120;
+
+/** The newest task list the agent kept, as checkbox lines, or an empty list. */
+export function latestTodos(timeline: readonly AgentTimelineItem[]): string[] {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const item = timeline[i];
+    if (item.type !== "todo") continue;
+    return item.items.slice(0, MAX_TODO_ITEMS).map((todo) => {
+      const state = todo.completed || todo.status === "completed" ? "x" : todo.status === "in_progress" ? "~" : " ";
+      return `- [${state}] ${cutMiddle(todo.text, 200)}`;
+    });
+  }
+  return [];
+}
+
+/** The newest plan the agent wrote, or null. */
+export function latestPlan(timeline: readonly AgentTimelineItem[]): string | null {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const item = timeline[i];
+    if (isToolCall(item) && item.detail.type === "plan" && item.detail.text.trim()) return item.detail.text.trim();
+  }
+  return null;
+}
+
+/** Folds repeated lines into a count and keeps the most recent ones, in order of last use. */
+function foldRecent(lines: readonly string[], limit: number): string[] {
+  const counts = new Map<string, number>();
+  for (const line of lines) {
+    const count = counts.get(line) ?? 0;
+    counts.delete(line);
+    counts.set(line, count + 1);
+  }
+  return [...counts].map(([line, count]) => (count > 1 ? `${line} (x${count})` : line)).slice(-limit);
+}
+
+/** The program a shell command runs, without its arguments, which can hold tokens and other secrets. */
+export function shellProgram(command: string): string {
+  const skipped = new Set(["cd", "export", "set", "source", "."]);
+  for (const segment of command.split(/&&|;|\|\|/)) {
+    const words = segment.trim().split(/\s+/).filter((word) => word && !/^\w+=/.test(word));
+    if (words.length === 0 || skipped.has(words[0])) continue;
+    return words[0].replace(/^["']|["']$/g, "").split("/").pop()?.slice(0, 40) || "command";
+  }
+  return "command";
+}
+
+/** What broke: error items, and shell calls that failed, named by program and exit code only. */
+export function failureSummaries(timeline: readonly AgentTimelineItem[], limit = MAX_FAILURES): string[] {
+  const lines: string[] = [];
+  for (const item of timeline) {
+    if (item.type === "error") {
+      lines.push(`- error: ${cutMiddle(item.message.replace(/\s+/g, " ").trim(), MAX_ERROR_CHARS)}`);
+    } else if (isToolCall(item) && item.detail.type === "shell") {
+      const exit = item.detail.exitCode;
+      if (item.status === "failed" || (typeof exit === "number" && exit !== 0)) {
+        lines.push(`- shell: ${shellProgram(item.detail.command)} failed${typeof exit === "number" ? ` (exit ${exit})` : ""}`);
+      }
+    }
+  }
+  return foldRecent(lines, limit);
+}
+
+/** Work the agent handed to sub-agents, by their short descriptions. */
+export function subAgentSummaries(timeline: readonly AgentTimelineItem[], limit = MAX_SUB_AGENTS): string[] {
+  const lines: string[] = [];
+  for (const item of timeline) {
+    if (!isToolCall(item) || item.detail.type !== "sub_agent" || !item.detail.description) continue;
+    const kind = item.detail.subAgentType ? ` (${item.detail.subAgentType})` : "";
+    lines.push(`- sub-agent${kind}: ${cutMiddle(item.detail.description.replace(/\s+/g, " ").trim(), MAX_SUB_AGENT_CHARS)}`);
+  }
+  return foldRecent(lines, limit);
+}
+
+/** How many times the agent's own conversation was compacted, which leaves earlier history only as a summary. */
+export function compactionCount(timeline: readonly AgentTimelineItem[]): number {
+  return timeline.filter((item) => item.type === "compaction" && item.status === "completed").length;
+}
 
 const CUT_MARKER = " (...cut...) ";
 
@@ -150,8 +228,11 @@ export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
     files.length > 0
       ? [...(files.length > shownFiles.length ? [`(${files.length - shownFiles.length} earlier files not shown)`] : []), ...shownFiles.map((file) => `- ${file}`)].join("\n")
       : "None recorded.";
-  const tried = toolSummaries(input.timeline);
+  const tried = [...toolSummaries(input.timeline), ...subAgentSummaries(input.timeline), ...failureSummaries(input.timeline)];
   const triedText = tried.length > 0 ? tried.join("\n") : "None recorded.";
+  const todos = latestTodos(input.timeline);
+  const plan = latestPlan(input.timeline);
+  const compactions = compactionCount(input.timeline);
   const transcript = transcriptExcerpt(input.timeline, limits);
 
   return [
@@ -168,6 +249,9 @@ export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
     `- Generated: ${new Date(input.now).toISOString()}`,
     ...(input.historyCut
       ? ["- Earlier history was not read because the conversation is longer than the read limit, so the Task below may be a later request than the first."]
+      : []),
+    ...(compactions > 0
+      ? [`- The agent's own conversation was compacted ${compactions} time${compactions === 1 ? "" : "s"}, so some earlier history exists only as a summary.`]
       : []),
     "",
     "# Relevant files",
@@ -194,6 +278,8 @@ export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
     "",
     "Not available from the session snapshot.",
     "",
+    ...(todos.length > 0 ? ["## Task list (latest)", "", ...todos, ""] : []),
+    ...(plan ? ["## Plan (latest)", "", cutMiddle(plan, limits.maxTextChars), ""] : []),
     ...(input.repoFacts ? ["## Repo state", "", input.repoFacts, ""] : []),
     ...(input.previousHandoff
       ? ["## Previous handoff", "", "This session was started from this handoff, so its details still apply.", "", cutMiddle(input.previousHandoff, limits.maxTextChars * 2), ""]

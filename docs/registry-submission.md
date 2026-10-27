@@ -47,6 +47,9 @@ For review:
   "Open in default app" on a handoff Baton saved, and read-only git commands (branch --show-current,
   status --short, log -n 8, with core.fsmonitor off and no optional locks) run in the agent's
   workspace when a handoff is written; a setting turns that off.
+- Draft contents: the writer's draft also carries the agent's latest task list and plan, error
+  messages (cut to 300 characters) and failed shell calls as program name and exit code only,
+  never the command line or tool output.
 - No runtime software installation. The package is readable TypeScript with no bundling.
 ```
 

@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import {
+  compactionCount,
   cutMiddle,
+  failureSummaries,
   firstUserText,
+  latestPlan,
+  latestTodos,
+  shellProgram,
+  subAgentSummaries,
   lastAssistantText,
   previousHandoffPath,
   renderMechanicalHandoff,
@@ -278,5 +284,115 @@ describe("previousHandoffPath", () => {
     });
     expect(doc).toContain("## Previous handoff");
     expect(doc).toContain("The original goal");
+  });
+});
+
+describe("signals beyond messages and files", () => {
+  const toolCall = (name: string, detail: unknown, status = "completed") => ({
+    type: "tool_call" as const,
+    callId: name,
+    name,
+    status: status as "completed",
+    error: null,
+    detail: detail as never,
+  });
+
+  it("keeps the newest task list as checkboxes", () => {
+    const items = timeline([
+      { type: "todo", items: [{ text: "old list", completed: true }] },
+      {
+        type: "todo",
+        items: [
+          { text: "Fix the TypeScript errors", completed: true },
+          { text: "Redeploy", completed: false, status: "in_progress" },
+          { text: "Run the 10 COAs", completed: false },
+        ],
+      },
+    ]);
+    expect(latestTodos(items)).toEqual([
+      "- [x] Fix the TypeScript errors",
+      "- [~] Redeploy",
+      "- [ ] Run the 10 COAs",
+    ]);
+    expect(latestTodos(timeline([]))).toEqual([]);
+  });
+
+  it("keeps the newest plan", () => {
+    const items = timeline([
+      toolCall("plan", { type: "plan", text: "First plan" }),
+      toolCall("plan", { type: "plan", text: "  Second plan  " }),
+    ]);
+    expect(latestPlan(items)).toBe("Second plan");
+    expect(latestPlan(timeline([]))).toBeNull();
+  });
+
+  it("names a failed shell call by program and exit code and never shows its arguments", () => {
+    const items = timeline([
+      toolCall("bash", { type: "shell", command: 'cd /app && API_KEY=abc curl -H "Authorization: Bearer SECRET123" https://x', exitCode: 22 }, "failed"),
+      toolCall("bash", { type: "shell", command: "pytest tests/", exitCode: 0 }),
+      toolCall("bash", { type: "shell", command: "./scripts/deploy.sh --token=SECRET456", exitCode: 1 }),
+    ]);
+    const lines = failureSummaries(items);
+    expect(lines).toEqual(["- shell: curl failed (exit 22)", "- shell: deploy.sh failed (exit 1)"]);
+    expect(lines.join("\n")).not.toContain("SECRET");
+  });
+
+  it("keeps error messages short and folds repeats", () => {
+    const items = timeline([
+      { type: "error", message: "Connection refused" },
+      { type: "error", message: "Connection refused" },
+      { type: "error", message: `Stack ${"x".repeat(1_000)} end` },
+    ]);
+    const lines = failureSummaries(items);
+    expect(lines[0]).toBe("- error: Connection refused (x2)");
+    expect(lines[1].length).toBeLessThan(330);
+    expect(lines[1]).toContain("end");
+  });
+
+  it("lists sub-agent work by description", () => {
+    const items = timeline([
+      toolCall("task", { type: "sub_agent", subAgentType: "Explore", description: "Find where invoices are exported" }),
+      toolCall("task", { type: "sub_agent", description: "Review the migration" }),
+      toolCall("task", { type: "sub_agent" }),
+    ]);
+    expect(subAgentSummaries(items)).toEqual([
+      "- sub-agent (Explore): Find where invoices are exported",
+      "- sub-agent: Review the migration",
+    ]);
+  });
+
+  it("counts completed compactions only", () => {
+    const items = timeline([
+      { type: "compaction", status: "completed" },
+      { type: "compaction", status: "loading" },
+      { type: "compaction", status: "completed" },
+    ]);
+    expect(compactionCount(items)).toBe(2);
+  });
+
+  it("finds a program past cd, assignments and quotes", () => {
+    expect(shellProgram("cd /app && FOO=1 pytest -q")).toBe("pytest");
+    expect(shellProgram('"/usr/bin/git" push')).toBe("git");
+    expect(shellProgram("")).toBe("command");
+  });
+
+  it("puts them in the draft", () => {
+    const doc = renderMechanicalHandoff({
+      agentId: "a",
+      workspaceId: "w",
+      cwd: "/work",
+      provider: null,
+      now: 1_000,
+      timeline: timeline([
+        { type: "todo", items: [{ text: "Redeploy", completed: false }] },
+        toolCall("plan", { type: "plan", text: "Ship it in two steps" }),
+        { type: "error", message: "Build failed" },
+        { type: "compaction", status: "completed" },
+      ]),
+    });
+    expect(doc).toContain("## Task list (latest)\n\n- [ ] Redeploy");
+    expect(doc).toContain("## Plan (latest)\n\nShip it in two steps");
+    expect(doc).toContain("- error: Build failed");
+    expect(doc).toContain("compacted 1 time,");
   });
 });
