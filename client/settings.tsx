@@ -4,7 +4,16 @@ import type { PaseoApi } from "@getpaseo/client";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { BatonSettings } from "../shared/baton";
-import { batonSettings, DEFAULT_SETTINGS, isProjectIgnored, MAX_CLEANUP_DAYS, MAX_IDLE_DELAY_MINUTES } from "../shared/baton";
+import {
+  batonSettings,
+  DEFAULT_SETTINGS,
+  DETAIL_LEVELS,
+  DETAIL_LIMITS,
+  isProjectIgnored,
+  MAX_CLEANUP_DAYS,
+  MAX_IDLE_DELAY_MINUTES,
+  type DetailLevel,
+} from "../shared/baton";
 
 interface ProfileChoice {
   value: string;
@@ -20,6 +29,19 @@ interface WorkspaceChoice {
 }
 
 const SAME_AS_RUNNING = "";
+
+const DETAIL_NAMES: Record<DetailLevel, string> = { compact: "Compact", standard: "Standard", full: "Full" };
+const DETAIL_NOTES: Record<DetailLevel, string> = {
+  compact: "Cheapest, least detail.",
+  standard: "A good balance.",
+  full: "Most detail, higher writer cost.",
+};
+
+// e.g. "Up to about 60k characters of conversation, 10 pages of history. A good balance."
+function describeDetail(level: DetailLevel): string {
+  const limits = DETAIL_LIMITS[level];
+  return `Up to about ${Math.round(limits.transcriptChars / 1000)}k characters of conversation, ${limits.historyPages * 200} history entries. ${DETAIL_NOTES[level]}`;
+}
 
 type ProviderSnapshot = Awaited<ReturnType<PaseoApi["providers"]["snapshot"]>>;
 type DaemonProfile = NonNullable<Awaited<ReturnType<PaseoApi["config"]["get"]>>["config"]["agentProfiles"]>[number];
@@ -298,6 +320,35 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
             </Pressable>
           );
         })}
+      </SettingsCard>
+      <Text style={styles.sectionTitle}>Handoff detail</Text>
+      <SettingsCard>
+        <Text style={[styles.hint, { marginBottom: 8 }]}>
+          How much of the conversation the writer sees. Long messages keep their start and end, and the writer is told
+          when earlier history was left out.
+        </Text>
+        {DETAIL_LEVELS.map((level) => {
+          const selected = draft.conversationDetail === level;
+          return (
+            <Pressable
+              key={level}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+              accessibilityLabel={`${DETAIL_NAMES[level]}: ${describeDetail(level)}`}
+              onPress={() => update({ conversationDetail: level })}
+              style={[styles.profileRow, selected ? styles.profileRowSelected : null]}
+            >
+              <Text style={styles.profileName}>{selected ? `\u2713 ${DETAIL_NAMES[level]}` : DETAIL_NAMES[level]}</Text>
+              <Text style={styles.hint}>{describeDetail(level)}</Text>
+            </Pressable>
+          );
+        })}
+        <SettingsSwitch
+          label="Include repo state"
+          hint="Add the branch, changed files and recent commit titles from git. They go to the writer's provider with the conversation. Turn off to keep file names and commit messages out of the draft."
+          value={draft.includeRepoState}
+          onValueChange={(value) => update({ includeRepoState: value })}
+        />
       </SettingsCard>
       <Text style={styles.sectionTitle}>Handoff files</Text>
       <SettingsCard>

@@ -13,7 +13,7 @@ export function buildWriterHandoffPrompt(draft: string): string {
     "# Acceptance criteria",
     "# Constraints",
     "",
-    "Fill every section from the machine draft below, correcting and expanding it with real detail. Be concrete: name the files changed, what works, what is broken, and the single next step.",
+    "Fill every section from the machine draft below, correcting and expanding it with real detail. Be concrete: name the files changed, what works, what is broken, and the single next step. The draft has the first request, every user message (long ones may be cut), the end of the conversation and the repo state. Where it says earlier messages were omitted, say what is unknown rather than inventing details.",
     "",
     "## Machine draft",
     "",

@@ -10,6 +10,7 @@ import {
   DAY_MS,
   DEFAULT_RETENTION_MS,
   DEFAULT_SETTINGS,
+  DETAIL_LIMITS,
   HANDOFF_FALLBACK_TIMEOUT_MS,
   isProjectIgnored,
   SUBAGENT_WAIT_LIMIT_MS,
@@ -31,6 +32,7 @@ import {
   stampHandoffDocument,
 } from "./handoff";
 import { handoffFileName, handoffPathFor, resolveStateFile } from "./paths";
+import { gatherRepoFacts } from "./repo-facts";
 import { isMissing, loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
 
@@ -71,6 +73,10 @@ async function openFileWithOs(filePath: string): Promise<void> {
   }
 }
 
+/** Timeline entries are read back in pages of this size, as many as the conversation detail level allows. */
+const TIMELINE_PAGE_SIZE = 200;
+const WRITER_TIMELINE_PAGES = 2;
+const HISTORY_CUT_NOTICE = "Earlier history was cut, so the task may be incomplete.";
 const WRITER_READ_ATTEMPTS = 3;
 const WRITER_READ_RETRY_MS = 500;
 
@@ -96,6 +102,8 @@ export class BatonController {
   private fallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private pendingHandoff = new Set<string>();
   private lastTimeline = new Map<string, readonly AgentTimelineItem[]>();
+  /** Agents whose conversation was longer than the read limit, so the first request may be missing. */
+  private historyCut = new Set<string>();
   private workspaceDirCache = new Map<string, string | null>();
   private writerAgentIds = new Set<string>();
   private pathNotices = new Map<string, string>();
@@ -161,6 +169,7 @@ export class BatonController {
       this.writerAgentIds.delete(agent.id);
       const document = timeline.length > 0 ? extractHandoffDocument(timeline) : await this.readWriterDocument(agent.id, paseo);
       await this.finalizeHandoff(originalAgentId, paseo, document);
+      await this.logWriterUsage(originalAgentId, agent.id, paseo);
       await this.archiveAgent(paseo, agent.id);
       return;
     }
@@ -289,19 +298,30 @@ export class BatonController {
   private async readWriterDocument(writerId: string, paseo: PaseoApi): Promise<string | null> {
     for (let attempt = 0; attempt < WRITER_READ_ATTEMPTS; attempt++) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, WRITER_READ_RETRY_MS));
-      const document = extractHandoffDocument(await this.fetchTimeline(writerId, paseo));
+      const document = extractHandoffDocument((await this.fetchTimeline(writerId, paseo, WRITER_TIMELINE_PAGES)).items);
       if (document) return document;
     }
     return null;
   }
 
-  private async fetchTimeline(agentId: string, paseo: PaseoApi): Promise<AgentTimelineItem[]> {
+  /** Reads the conversation back newest page first, up to maxPages; `cut` is true when older entries remain. */
+  private async fetchTimeline(
+    agentId: string,
+    paseo: PaseoApi,
+    maxPages: number,
+  ): Promise<{ items: AgentTimelineItem[]; cut: boolean }> {
     try {
-      const page = await paseo.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: 200 });
-      return page.entries.map((entry) => entry.item);
+      const timeline = paseo.agents.ref(agentId).timeline;
+      let page = await timeline.refetch({ direction: "tail", limit: TIMELINE_PAGE_SIZE });
+      let items = page.entries.map((entry) => entry.item);
+      for (let pages = 1; page.hasOlder && page.startCursor && pages < maxPages; pages++) {
+        page = await timeline.refetch({ direction: "before", cursor: page.startCursor, limit: TIMELINE_PAGE_SIZE });
+        items = [...page.entries.map((entry) => entry.item), ...items];
+      }
+      return { items, cut: Boolean(page.hasOlder) };
     } catch (error: unknown) {
       this.log(`Reading the conversation for ${agentId} failed: ${String(error)}`);
-      return [];
+      return { items: [], cut: false };
     }
   }
 
@@ -309,8 +329,35 @@ export class BatonController {
   // so read the recent conversation back when a handoff is about to be written.
   private async ensureTimeline(agentId: string, paseo: PaseoApi): Promise<void> {
     if ((this.lastTimeline.get(agentId)?.length ?? 0) > 0) return;
-    const items = await this.fetchTimeline(agentId, paseo);
+    const { historyPages } = DETAIL_LIMITS[(await this.readSettings()).conversationDetail];
+    const { items, cut } = await this.fetchTimeline(agentId, paseo, historyPages);
     if (items.length > 0) this.lastTimeline.set(agentId, items);
+    if (cut) this.historyCut.add(agentId);
+    else this.historyCut.delete(agentId);
+  }
+
+  /** The machine draft: what Baton knows of the conversation, within the configured detail level. */
+  private async buildDraft(entry: BatonEntry, handoffPath: string, paseo: PaseoApi): Promise<string> {
+    await this.ensureTimeline(entry.agentId, paseo);
+    const settings = await this.readSettings();
+    const detail = DETAIL_LIMITS[settings.conversationDetail];
+    const cwd = entry.cwd ?? path.dirname(path.dirname(handoffPath));
+    return renderMechanicalHandoff({
+      agentId: entry.agentId,
+      workspaceId: entry.workspaceId,
+      cwd,
+      provider: null,
+      timeline: this.lastTimeline.get(entry.agentId) ?? [],
+      now: this.now(),
+      limits: {
+        maxChars: detail.transcriptChars,
+        maxUserChars: detail.userChars,
+        maxAssistantChars: detail.assistantChars,
+        maxTextChars: detail.textChars,
+      },
+      historyCut: this.historyCut.has(entry.agentId),
+      repoFacts: settings.includeRepoState ? await gatherRepoFacts(cwd) : "",
+    });
   }
 
   async setEnabled(
@@ -761,15 +808,7 @@ export class BatonController {
       throw new Error(`Invalid handoff writer model "${providerModel}"; expected provider/model format.`);
     }
     if (!entry.workspaceId) throw new Error("No workspace for handoff writer.");
-    await this.ensureTimeline(entry.agentId, paseo);
-    const draft = renderMechanicalHandoff({
-      agentId: entry.agentId,
-      workspaceId: entry.workspaceId,
-      cwd: entry.cwd ?? path.dirname(path.dirname(handoffPath)),
-      provider: null,
-      timeline: this.lastTimeline.get(entry.agentId) ?? [],
-      now: this.now(),
-    });
+    const draft = await this.buildDraft(entry, handoffPath, paseo);
     const writer = await paseo.workspaces.ref(entry.workspaceId).agents.create({
       config: thinkingOptionId ? { provider: providerModel, thinkingOptionId } : { provider: providerModel },
       title: BATON_WRITER_TITLE,
@@ -823,17 +862,7 @@ export class BatonController {
     const handoffPath = await this.pathForEntry(entry, paseo);
     if (!handoffPath) throw new Error(`Cannot resolve handoff path for ${entry.agentId}`);
     await this.io.mkdir(path.dirname(handoffPath));
-    await this.ensureTimeline(entry.agentId, paseo);
-    const timeline = this.lastTimeline.get(entry.agentId) ?? [];
-    const cwd = entry.cwd ?? path.dirname(path.dirname(handoffPath));
-    const content = renderMechanicalHandoff({
-      agentId: entry.agentId,
-      workspaceId: entry.workspaceId,
-      cwd,
-      provider: null,
-      timeline,
-      now: this.now(),
-    });
+    const content = await this.buildDraft(entry, handoffPath, paseo);
     await this.io.writeFile(handoffPath, content);
     return handoffPath;
   }
@@ -905,8 +934,19 @@ export class BatonController {
     this.dropEntry(agentId);
     this.pendingHandoff.delete(agentId);
     this.lastTimeline.delete(agentId);
+    this.historyCut.delete(agentId);
     this.writerAgentIds.delete(agentId);
     this.writerByAgentId.delete(agentId);
+  }
+
+  /** Logs the writer's last model call, which shows how big its context was and what the handoff cost. */
+  private async logWriterUsage(agentId: string, writerId: string, paseo: PaseoApi): Promise<void> {
+    try {
+      const usage = (await paseo.agents.ref(writerId).refresh())?.agent.lastUsage;
+      this.log(`Handoff writer for ${agentId} usage: ${JSON.stringify(usage ?? null)}`);
+    } catch (error: unknown) {
+      this.log(`Reading the handoff writer's usage for ${writerId} failed: ${String(error)}`);
+    }
   }
 
   private async archiveAgent(paseo: PaseoApi, agentId: string): Promise<void> {
@@ -981,9 +1021,12 @@ export class BatonController {
     const savedAt = this.entries.get(agentId)?.savedAt;
     if (savedAt && !data.savedAt) data = { ...data, savedAt };
     if (continuedTitle && !data.continuedTitle) data = { ...data, continuedTitle };
-    const notice = this.pathNotices.get(agentId);
+    const notice = [this.pathNotices.get(agentId), this.historyCut.has(agentId) ? HISTORY_CUT_NOTICE : undefined]
+      .filter(Boolean)
+      .join(" ");
     if (notice) data = { ...data, notice };
     this.pathNotices.delete(agentId);
+    this.historyCut.delete(agentId);
     try {
       await paseo.agents.ref(agentId).timeline.append({
         type: "plugin",

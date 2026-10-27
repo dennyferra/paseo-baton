@@ -52,9 +52,33 @@ export const MAX_CLEANUP_DAYS = 365;
 /** A subagent mid-turn longer than this no longer holds back a handoff (it probably never reported back). */
 export const SUBAGENT_WAIT_LIMIT_MS = 4 * 60 * 60 * 1000;
 
+export const DETAIL_LEVELS = ["compact", "standard", "full"] as const;
+export type DetailLevel = (typeof DETAIL_LEVELS)[number];
+
+/** What each conversation detail level lets the handoff writer see, in characters unless noted. */
+export interface DetailLimits {
+  /** The whole transcript; the oldest messages are dropped first. */
+  transcriptChars: number;
+  /** One user message; what the user wrote is the spec, so it is cut least. */
+  userChars: number;
+  assistantChars: number;
+  /** The Task and Current state text. */
+  textChars: number;
+  /** Pages of 200 timeline entries read back from Paseo. */
+  historyPages: number;
+}
+
+export const DETAIL_LIMITS: Record<DetailLevel, DetailLimits> = {
+  compact: { transcriptChars: 30_000, userChars: 4_000, assistantChars: 1_000, textChars: 4_000, historyPages: 5 },
+  standard: { transcriptChars: 60_000, userChars: 8_000, assistantChars: 3_000, textChars: 8_000, historyPages: 10 },
+  full: { transcriptChars: 150_000, userChars: 20_000, assistantChars: 6_000, textChars: 20_000, historyPages: 25 },
+};
+
 export const batonSettingsSchema = z.object({
   idleDelayMinutes: z.number().int().min(1).max(MAX_IDLE_DELAY_MINUTES).default(DEFAULT_IDLE_DELAY_MINUTES),
   handoffProfileId: z.string().trim().max(200).default(""),
+  conversationDetail: z.enum(DETAIL_LEVELS).default("standard"),
+  includeRepoState: z.boolean().default(true),
   handoffDirectory: z.string().trim().max(500).default(""),
   deleteStaleHandoffs: z.boolean().default(true),
   waitForSubagents: z.boolean().default(true),
@@ -81,7 +105,7 @@ export function isProjectIgnored(
 export const batonSettings = defineSettings({
   id: "baton",
   scope: "host",
-  version: 10,
+  version: 11,
   schema: batonSettingsSchema,
   migrate: (values) => {
     const old = values && typeof values === "object" ? (values as Record<string, unknown>) : {};
@@ -93,6 +117,8 @@ export const batonSettings = defineSettings({
       ...(typeof old.waitForSubagents === "boolean" ? { waitForSubagents: old.waitForSubagents } : {}),
       ...(typeof old.cleanupOldHandoffs === "boolean" ? { cleanupOldHandoffs: old.cleanupOldHandoffs } : {}),
       ...(typeof old.cleanupAfterDays === "number" ? { cleanupAfterDays: old.cleanupAfterDays } : {}),
+      ...(DETAIL_LEVELS.includes(old.conversationDetail as DetailLevel) ? { conversationDetail: old.conversationDetail as DetailLevel } : {}),
+      ...(typeof old.includeRepoState === "boolean" ? { includeRepoState: old.includeRepoState } : {}),
       ...(typeof old.handoffDirectory === "string" ? { handoffDirectory: old.handoffDirectory } : {}),
       ...(Array.isArray(old.ignoredWorkspaceIds) ? { ignoredWorkspaceIds: old.ignoredWorkspaceIds } : {}),
       ...(Array.isArray(old.ignoredProjectIds) ? { ignoredProjectIds: old.ignoredProjectIds } : {}),

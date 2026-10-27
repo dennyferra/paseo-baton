@@ -50,6 +50,7 @@ function isToolCall(item: AgentTimelineItem): item is ToolCallTimelineItem {
   return item.type === "tool_call";
 }
 
+/** The most recent tool calls, up to the limit. */
 export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40): string[] {
   const out: string[] = [];
   for (const item of timeline) {
@@ -66,25 +67,54 @@ export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40
       target = ` ${detail.label}`;
     }
     out.push(`- ${item.name}${target} (${item.status})`);
-    if (out.length >= limit) break;
   }
-  return out;
+  return out.slice(-limit);
 }
+
+const MAX_FILES = 100;
+
+export interface TranscriptLimits {
+  /** Total characters kept; the oldest messages are dropped first. */
+  maxChars: number;
+  /** What the user wrote is the spec, so it is cut far less than the agent's replies. */
+  maxUserChars: number;
+  maxAssistantChars: number;
+}
+
+const CUT_MARKER = " (...cut...) ";
+
+/** Keeps the start and the end of a long text, so a question after a big paste is not lost. */
+export function cutMiddle(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const keep = Math.max(max - CUT_MARKER.length, 0);
+  const head = Math.ceil(keep / 2);
+  return `${text.slice(0, head)}${CUT_MARKER}${text.slice(text.length - (keep - head))}`;
+}
+
+export const DEFAULT_TRANSCRIPT_LIMITS: TranscriptLimits = {
+  maxChars: 60_000,
+  maxUserChars: 8_000,
+  maxAssistantChars: 3_000,
+};
 
 export function transcriptExcerpt(
   timeline: readonly AgentTimelineItem[],
-  maxMessages = 30,
-  maxCharsPerMessage = 2000,
+  limits: TranscriptLimits = DEFAULT_TRANSCRIPT_LIMITS,
 ): string {
   const messages = messageTexts(timeline);
-  const tail = messages.slice(-maxMessages);
-  const lines: string[] = [];
-  for (const message of tail) {
-    const text = message.text.length > maxCharsPerMessage
-      ? `${message.text.slice(0, maxCharsPerMessage)}...`
-      : message.text;
-    lines.push(`> ${message.role}: ${text.replace(/\n+/g, " ")}`);
+  const kept: string[] = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    const max = message.role === "user" ? limits.maxUserChars : limits.maxAssistantChars;
+    const line = `> ${message.role}: ${cutMiddle(message.text, max).replace(/\n+/g, " ")}`;
+    if (used + line.length > limits.maxChars && kept.length > 0) break;
+    kept.push(line);
+    used += line.length;
   }
+  const omitted = messages.length - kept.length;
+  const lines = kept.reverse();
+  if (omitted > 0) lines.unshift(`> (${omitted} earlier messages omitted)`);
   return lines.join("\n");
 }
 
@@ -95,16 +125,28 @@ export interface MechanicalHandoffInput {
   provider: string | null;
   timeline: readonly AgentTimelineItem[];
   now: number;
+  /** Branch, changed files and recent commits, gathered by Baton. */
+  repoFacts?: string;
+  /** Limits on what the draft carries; the standard ones when omitted. */
+  limits?: TranscriptLimits & { maxTextChars: number };
+  /** True when the conversation was longer than what could be read, so the first request may be missing. */
+  historyCut?: boolean;
 }
 
 export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
-  const task = firstUserText(input.timeline) ?? "Not captured.";
-  const currentState = lastAssistantText(input.timeline) ?? "Not captured.";
+  const limits = input.limits ?? { ...DEFAULT_TRANSCRIPT_LIMITS, maxTextChars: 8_000 };
+  const capped = (text: string | null) => (text === null ? "Not captured." : cutMiddle(text, limits.maxTextChars));
+  const task = capped(firstUserText(input.timeline));
+  const currentState = capped(lastAssistantText(input.timeline));
   const files = touchedFilePaths(input.timeline);
-  const filesText = files.length > 0 ? files.map((file) => `- ${file}`).join("\n") : "None recorded.";
+  const shownFiles = files.slice(-MAX_FILES);
+  const filesText =
+    files.length > 0
+      ? [...(files.length > shownFiles.length ? [`(${files.length - shownFiles.length} earlier files not shown)`] : []), ...shownFiles.map((file) => `- ${file}`)].join("\n")
+      : "None recorded.";
   const tried = toolSummaries(input.timeline);
   const triedText = tried.length > 0 ? tried.join("\n") : "None recorded.";
-  const transcript = transcriptExcerpt(input.timeline);
+  const transcript = transcriptExcerpt(input.timeline, limits);
 
   return [
     "# Task",
@@ -118,6 +160,9 @@ export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
     `- Provider: ${input.provider ?? "unknown"}`,
     `- Agent: ${input.agentId}`,
     `- Generated: ${new Date(input.now).toISOString()}`,
+    ...(input.historyCut
+      ? ["- Earlier history was not read because the conversation is longer than the read limit, so the Task below may be a later request than the first."]
+      : []),
     "",
     "# Relevant files",
     "",
@@ -143,6 +188,7 @@ export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
     "",
     "Not available from the session snapshot.",
     "",
+    ...(input.repoFacts ? ["## Repo state", "", input.repoFacts, ""] : []),
     "## Transcript",
     "",
     transcript,

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Controllers use the real git lookup by default, which is slow and irrelevant here.
+vi.mock("../server/repo-facts", () => ({ gatherRepoFacts: async () => "Branch: main" }));
 import type { BatonStoreIo } from "../server/store";
 import { BatonController } from "../server/controller";
 import { batonStateSchema, DEFAULT_SETTINGS, SUBAGENT_WAIT_LIMIT_MS, type BatonSettings } from "../shared/baton";
@@ -42,6 +45,8 @@ function settings(overrides: Partial<BatonSettings> = {}) {
   const values: BatonSettings = {
     idleDelayMinutes: 15,
     handoffProfileId: "",
+    conversationDetail: "standard",
+    includeRepoState: true,
     handoffDirectory: "",
     deleteStaleHandoffs: true,
     waitForSubagents: true,
@@ -117,6 +122,12 @@ function stubPaseo(opts: { createId?: string; history?: Record<string, unknown[]
     },
   };
   return { paseo, calls, created, archived, appended, agents };
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let tries = 0; tries < 50 && !condition(); tries++) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
 }
 
 const STATE_FILE = "/home/.paseo/plugin-data/baton/baton-state.json";
@@ -844,7 +855,7 @@ describe("BatonController", () => {
     await controller.dispose();
   });
 
-  it("spawns a handoff writer from the configured profile (provider, model, effort; no mode) and finalizes from its turn", async () => {
+  it("pages back to the first request and passes the repo state to the writer", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({
         "agent-a": {
@@ -861,13 +872,128 @@ describe("BatonController", () => {
     });
     const controller = new BatonController({
       dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const stub = stubPaseo({ createId: "writer-1" });
+    const originalRef = stub.paseo.agents.ref;
+    const cursor = { epoch: "e", seq: 100 };
+    stub.paseo.agents.ref = (agentId: string) => {
+      const handle = originalRef(agentId);
+      if (agentId === "agent-a") {
+        handle.timeline.refetch = (async (options: { direction?: string }) =>
+          options.direction === "before"
+            ? { entries: [{ item: { type: "user_message", text: "Original request: add retries" } }], hasOlder: false, startCursor: null }
+            : { entries: [{ item: { type: "assistant_message", text: "Latest reply" } }], hasOlder: true, startCursor: cursor }) as never;
+      }
+      return handle;
+    };
+    await controller.ensureRecovered(stub.paseo as never);
+    await waitFor(() => stub.created.length > 0);
+    const prompt = String(stub.created[0].prompt);
+    expect(prompt).toContain("# Task\n\nOriginal request: add retries");
+    expect(prompt).toContain("## Repo state\n\nBranch: main");
+    await controller.dispose();
+  });
+
+  describe("how much history the writer sees", () => {
+    const pendingState = JSON.stringify({
+      "agent-a": {
+        agentId: "agent-a",
+        workspaceId: "wks-a",
+        cwd: "/work",
+        idleSince: NOW - 60_000,
+        fireAt: NOW,
+        deadline: NOW + 60_000,
+        updatedAt: NOW - 60_000,
+        status: "pending",
+      },
+    });
+
+    async function run(overrides: Partial<BatonSettings>) {
+      const io = memoryIo({ [STATE_FILE]: pendingState });
+      const controller = new BatonController({
+        dataDir: "/home/.paseo/plugin-data/baton",
+        settings: settings(overrides),
+        log: () => {},
+        io,
+        now: () => NOW,
+      });
+      const stub = stubPaseo({ createId: "writer-1" });
+      let refetches = 0;
+      const originalRef = stub.paseo.agents.ref;
+      stub.paseo.agents.ref = (agentId: string) => {
+        const handle = originalRef(agentId);
+        if (agentId === "agent-a") {
+          // Every page says there is more, so the page limit is what stops the read.
+          handle.timeline.refetch = (async () => {
+            refetches += 1;
+            return {
+              entries: [{ item: { type: "user_message", text: `page ${refetches}` } }],
+              hasOlder: true,
+              startCursor: { epoch: "e", seq: 1000 - refetches },
+            };
+          }) as never;
+        }
+        return handle;
+      };
+      await controller.ensureRecovered(stub.paseo as never);
+      await waitFor(() => stub.created.length > 0);
+      await controller.onTurnEnded(
+        { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
+        [{ type: "assistant_message", text: "# Task\nShip it" }],
+        stub.paseo as never,
+      );
+      await controller.dispose();
+      return { ...stub, refetches: () => refetches };
+    }
+
+    it("reads as many pages as the detail level allows and warns when history was cut", async () => {
+      const compact = await run({ conversationDetail: "compact" });
+      expect(compact.refetches()).toBe(5);
+      expect(String(compact.created[0].prompt)).toContain("Earlier history was not read");
+      const row = compact.appended.find((item) => item.kind === "baton-ready");
+      expect((row?.data as { notice?: string }).notice).toContain("Earlier history was cut");
+
+      const full = await run({ conversationDetail: "full" });
+      expect(full.refetches()).toBe(25);
+    });
+
+    it("leaves the repo state out when it is turned off", async () => {
+      const withFacts = await run({});
+      expect(String(withFacts.created[0].prompt)).toContain("## Repo state");
+      const withoutFacts = await run({ includeRepoState: false });
+      expect(String(withoutFacts.created[0].prompt)).not.toContain("## Repo state");
+    });
+  });
+
+  it("spawns a handoff writer from the configured profile (provider, model, effort; no mode) and finalizes from its turn", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({
+        "agent-a": {
+          agentId: "agent-a",
+          workspaceId: "wks-a",
+          cwd: "/work",
+          idleSince: NOW - 60_000,
+          fireAt: NOW,
+          deadline: NOW + 60_000,
+          updatedAt: NOW - 60_000,
+          status: "pending",
+        },
+      }),
+    });
+    const logs: string[] = [];
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
       settings: settings({
         idleDelayMinutes: 15,
         handoffProfileId: "profile-1",
         ignoredWorkspaceIds: [],
     ignoredProjectIds: [],
       }),
-      log: () => {},
+      log: (message) => logs.push(message),
       io,
       now: () => NOW,
     });
@@ -886,6 +1012,7 @@ describe("BatonController", () => {
     expect(calls).toContain("create:wks-a");
     expect(created[0].config).toEqual({ provider: "claude/claude-haiku-5-5", thinkingOptionId: "low" });
     expect(archived).toContain("writer-1");
+    expect(logs.some((message) => message.startsWith("Handoff writer for agent-a usage:"))).toBe(true);
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
     expect(state["agent-a"].status).toBe("done");

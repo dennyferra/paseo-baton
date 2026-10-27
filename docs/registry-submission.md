@@ -40,8 +40,10 @@ For review:
   older than 3 days (on start and once a day). Both have settings to turn them off, and it
   only ever deletes <agentId>.md files it recorded itself. The only environment variable
   it reads is PASEO_HOME, to find the daemon home.
-- Execution: one subprocess, the OS opener (open / xdg-open / cmd start), run only when
-  the user clicks "Open in default app" on a handoff Baton saved.
+- Execution: the OS opener (open / xdg-open / cmd start), run only when the user clicks
+  "Open in default app" on a handoff Baton saved, and read-only git commands (branch --show-current,
+  status --short, log -n 8, with core.fsmonitor off and no optional locks) run in the agent's
+  workspace when a handoff is written; a setting turns that off.
 - No runtime software installation. The package is readable TypeScript with no bundling.
 ```
 
