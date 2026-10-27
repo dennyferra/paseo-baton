@@ -394,6 +394,38 @@ describe("BatonController", () => {
     await controller.dispose();
   });
 
+  it("keeps only the latest writer for an agent by archiving the earlier ones when it starts a new one", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({
+        "agent-a": {
+          agentId: "agent-a",
+          workspaceId: "wks-a",
+          cwd: "/work",
+          idleSince: NOW - 60_000,
+          fireAt: NOW,
+          deadline: NOW + 60_000,
+          updatedAt: NOW - 60_000,
+          status: "pending",
+        },
+      }),
+    });
+    const controller = makeController(io);
+    const stub = stubPaseo({ createId: "writer-new" });
+    const mine = { "baton-writer": "1", "paseo.parent-agent-id": "agent-a" };
+    const other = { "baton-writer": "1", "paseo.parent-agent-id": "agent-b" };
+    stub.agents.push(
+      ...([
+        { id: "writer-earlier", status: "idle", labels: mine },
+        { id: "writer-of-b", status: "idle", labels: other },
+      ] as never[]),
+    );
+    await controller.ensureRecovered(stub.paseo as never);
+    await waitFor(() => stub.created.length > 0);
+    await waitFor(() => stub.archived.length > 0);
+    expect(stub.archived).toEqual(["writer-earlier"]);
+    await controller.dispose();
+  });
+
   it("reads a saved handoff for review and rejects unknown paths", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),

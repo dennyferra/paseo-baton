@@ -581,7 +581,8 @@ export class BatonController {
 
     const knownAgentIds = new Set<string>();
     try {
-      const { entries } = await paseo.agents.list({});
+      // Subagents may count as background agents, so ask for those too.
+      const { entries } = await paseo.agents.list({ includeBackground: true });
       for (const entry of entries) {
         knownAgentIds.add(entry.agent.id);
         // Writers of an earlier version stood alone, and one still running after a restart will not be heard
@@ -837,6 +838,7 @@ export class BatonController {
     }
     if (!entry.workspaceId) throw new Error("No workspace for handoff writer.");
     const draft = await this.buildDraft(entry, handoffPath, paseo, settings);
+    await this.archiveEarlierWriters(entry.agentId, paseo);
     const writer = await paseo.workspaces.ref(entry.workspaceId).agents.create({
       config: thinkingOptionId ? { provider: providerModel, thinkingOptionId } : { provider: providerModel },
       title: BATON_WRITER_TITLE,
@@ -847,6 +849,24 @@ export class BatonController {
     });
     this.writerAgentIds.add(writer.id);
     this.writerByAgentId.set(writer.id, entry.agentId);
+  }
+
+  /** Only the latest writer is kept for an agent, so repeated handoffs do not pile writers up under it. */
+  private async archiveEarlierWriters(agentId: string, paseo: PaseoApi): Promise<void> {
+    try {
+      const { entries } = await paseo.agents.list({
+        includeBackground: true,
+        filter: { labels: { [BATON_WRITER_LABEL]: "1", [PARENT_AGENT_ID_LABEL]: agentId } },
+      });
+      for (const { agent } of entries) {
+        const labels = agent.labels;
+        if (labels?.[BATON_WRITER_LABEL] === "1" && labels[PARENT_AGENT_ID_LABEL] === agentId) {
+          await this.archiveAgent(paseo, agent.id);
+        }
+      }
+    } catch (error: unknown) {
+      this.log(`Archiving earlier handoff writers for ${agentId} failed: ${String(error)}`);
+    }
   }
 
   /** `useSavedFile` is false when an old file could not be cleared, so it must not pass for the new handoff. */
