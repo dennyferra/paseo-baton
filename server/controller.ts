@@ -29,6 +29,7 @@ import {
   buildWriterHandoffPrompt,
   extractHandoffDocument,
   extractTitleFromDocument,
+  isHandoffDocument,
   stampHandoffDocument,
 } from "./handoff";
 import { handoffFileName, handoffPathFor, resolveStateFile } from "./paths";
@@ -725,6 +726,10 @@ export class BatonController {
     }
     try {
       await this.io.mkdir(path.dirname(handoffPath));
+      // A file left by an earlier handoff must not be mistaken for one the writer saved itself.
+      await this.io.unlink(handoffPath).catch((error: unknown) => {
+        if (!isMissing(error)) throw error;
+      });
       const settings = await this.readSettings();
       const writer =
         (await this.profileProviderModel(paseo, settings.handoffProfileId)) ??
@@ -822,25 +827,10 @@ export class BatonController {
       this.markSkippedEntry(agentId);
       return;
     }
-    let path = handoffPath;
-    let exists = false;
-    try {
-      exists = await this.io.exists(handoffPath);
-    } catch (error: unknown) {
-      this.log(`Checking handoff file for ${agentId} failed: ${String(error)}`);
-    }
-    if (!exists && document) {
-      try {
-        await this.io.mkdir(dirname(handoffPath));
-        await this.io.writeFile(handoffPath, stampHandoffDocument(document, this.now()));
-        exists = true;
-      } catch (error: unknown) {
-        this.log(`Writing handoff document for ${agentId} failed: ${String(error)}`);
-      }
-    }
-    if (!exists) {
-      path = await this.writeMechanical(entry, paseo);
-    }
+    // The writer's reply is the document. A writer that saved the file itself and replied with only a
+    // confirmation is accepted too, so either way Baton ends up stamping a real handoff.
+    const saved = (document && (await this.saveWriterDocument(agentId, handoffPath, document))) || (await this.stampSavedFile(agentId, handoffPath));
+    const path = saved ? handoffPath : await this.writeMechanical(entry, paseo);
     const done = markDone(entry, path, this.now());
     this.entries.set(agentId, done);
     this.persistEntries();
@@ -849,6 +839,30 @@ export class BatonController {
       path,
       continuedAgentId: done.continuedAgentId,
     });
+  }
+
+  private async saveWriterDocument(agentId: string, handoffPath: string, document: string): Promise<boolean> {
+    try {
+      await this.io.mkdir(dirname(handoffPath));
+      await this.io.writeFile(handoffPath, stampHandoffDocument(document, this.now()));
+      return true;
+    } catch (error: unknown) {
+      this.log(`Writing handoff document for ${agentId} failed: ${String(error)}`);
+      return false;
+    }
+  }
+
+  /** Adds the Created line to a handoff file the writer saved itself. False when there is no usable file. */
+  private async stampSavedFile(agentId: string, handoffPath: string): Promise<boolean> {
+    try {
+      const text = await this.io.readFile(handoffPath);
+      if (!isHandoffDocument(text)) return false;
+      await this.io.writeFile(handoffPath, stampHandoffDocument(text, this.now()));
+      return true;
+    } catch (error: unknown) {
+      if (!isMissing(error)) this.log(`Reading the handoff file for ${agentId} failed: ${String(error)}`);
+      return false;
+    }
   }
 
   private async writeMechanical(entry: BatonEntry, paseo: PaseoApi): Promise<string> {

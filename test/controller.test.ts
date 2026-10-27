@@ -1004,6 +1004,58 @@ describe("BatonController", () => {
     });
   });
 
+  describe("a writer that saves the file itself", () => {
+    const writerTurn = { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null };
+
+    async function run(files: Record<string, string>, writerReply: string) {
+      const io = memoryIo({
+              [STATE_FILE]: JSON.stringify({
+                "agent-a": {
+                  agentId: "agent-a",
+                  workspaceId: "wks-a",
+                  cwd: "/work",
+                  idleSince: NOW - 60_000,
+                  fireAt: NOW,
+                  deadline: NOW + 60_000,
+                  updatedAt: NOW - 60_000,
+                  status: "pending",
+                },
+              }),
+        ...files,
+      });
+      const controller = new BatonController({
+        dataDir: "/home/.paseo/plugin-data/baton",
+        settings: settings(),
+        log: () => {},
+        io,
+        now: () => NOW,
+      });
+      const { paseo, created } = stubPaseo({ createId: "writer-1", history: { "agent-a": [{ type: "user_message", text: "Fix the login bug" }] } });
+      await controller.ensureRecovered(paseo as never);
+      await waitFor(() => created.length > 0);
+      return { controller, io, paseo, writerReply };
+    }
+
+    it("stamps the file the writer saved when its reply is only a confirmation", async () => {
+      const { controller, io, paseo } = await run({}, "Saved.");
+      // The writer saves the file while it works, then replies with a short confirmation.
+      io.files.set(HANDOFF_PATH, "Title: Fix login\n\n# Task\nFix the login bug\n");
+      await controller.onTurnEnded(writerTurn, [{ type: "assistant_message", text: "Saved." }], paseo as never);
+      expect(io.files.get(HANDOFF_PATH)).toContain("Created: 1970-01-01T00:16:40.000Z");
+      expect(io.files.get(HANDOFF_PATH)).toContain("Fix the login bug");
+      expect(io.files.get(HANDOFF_PATH)).not.toContain("Generated:");
+      await controller.dispose();
+    });
+
+    it("does not mistake a handoff left by an earlier run for the writer's", async () => {
+      const { controller, io, paseo } = await run({ [HANDOFF_PATH]: "# Task\nOLD STALE HANDOFF\n" }, "Done.");
+      await controller.onTurnEnded(writerTurn, [{ type: "assistant_message", text: "Done." }], paseo as never);
+      expect(io.files.get(HANDOFF_PATH)).not.toContain("OLD STALE HANDOFF");
+      expect(io.files.get(HANDOFF_PATH)).toContain("Fix the login bug");
+      await controller.dispose();
+    });
+  });
+
   it("spawns a handoff writer from the configured profile (provider, model, effort; no mode) and finalizes from its turn", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({

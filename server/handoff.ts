@@ -21,6 +21,11 @@ export function buildWriterHandoffPrompt(draft: string): string {
   ].join("\n");
 }
 
+/** True when the text looks like a handoff document, meaning it has a Task heading. */
+export function isHandoffDocument(text: string): boolean {
+  return /^#\s*Task\s*$/im.test(text);
+}
+
 /** Returns the writer's reply as a handoff document, or null if it does not look like one. */
 export function extractHandoffDocument(timeline: ReadonlyArray<{ type: string; text?: string }>): string | null {
   const text = timeline
@@ -31,7 +36,7 @@ export function extractHandoffDocument(timeline: ReadonlyArray<{ type: string; t
     .replace(/^```(?:markdown|md)?\s*\n/i, "")
     .replace(/\n```\s*$/, "")
     .trim();
-  return /^#\s*Task\s*$/im.test(text) ? `${text}\n` : null;
+  return isHandoffDocument(text) ? `${text}\n` : null;
 }
 
 export function extractTitleFromDocument(text: string, fallback: string): string {
