@@ -52,7 +52,8 @@ Settings live under Settings -> Plugins -> Baton.
 - **Handoff writer** (`handoffProfileId`): pick one of your Paseo agent profiles. Its provider,
   model and effort are used; its mode is ignored. The writer never needs file access: it replies with the document and Baton writes the file. The default,
   "Same as running agent", uses the idle agent's own model and effort. The writer is a short-lived
-  dedicated agent archived after its turn, so the idle agent's chat only shows the Handoff saved row.
+  subagent of the idle agent, archived after its turn. It appears under that agent's subagents, Paseo sends no
+  "finished" notification for it, and the idle agent's chat only shows the Handoff saved row.
 - **Conversation detail** (`conversationDetail`, default Standard): how much of the conversation the writer
   sees. Compact reads up to 1,000 history entries and keeps about 30,000 characters, Standard 2,000 entries
   and 60,000, Full 5,000 entries and 150,000. Long messages keep their start and end. When the conversation

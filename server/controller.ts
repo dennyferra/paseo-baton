@@ -1,4 +1,5 @@
 import type { PaseoApi, PaseoAgent } from "@getpaseo/client";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { PluginSettings } from "@getpaseo/plugin/server";
 import { execFile } from "node:child_process";
@@ -815,7 +816,9 @@ export class BatonController {
     const writer = await paseo.workspaces.ref(entry.workspaceId).agents.create({
       config: thinkingOptionId ? { provider: providerModel, thinkingOptionId } : { provider: providerModel },
       title: BATON_WRITER_TITLE,
-      labels: { [BATON_WRITER_LABEL]: "1" },
+      // Marked as a subagent of the idle agent, so Paseo shows it under that agent, does not notify when it
+      // finishes, and archives it with its parent.
+      labels: { [BATON_WRITER_LABEL]: "1", [PARENT_AGENT_ID_LABEL]: entry.agentId },
       prompt: buildWriterHandoffPrompt(draft),
     });
     this.writerAgentIds.add(writer.id);

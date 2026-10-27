@@ -1101,6 +1101,8 @@ describe("BatonController", () => {
     expect(io.files.get(HANDOFF_PATH)).toContain("# Task\nShip it");
     expect(calls).toContain("create:wks-a");
     expect(created[0].config).toEqual({ provider: "claude/claude-haiku-5-5", thinkingOptionId: "low" });
+    // A subagent of the idle agent: Paseo shows it under that agent and sends no finished notification.
+    expect(created[0].labels).toEqual({ "baton-writer": "1", "paseo.parent-agent-id": "agent-a" });
     expect(archived).toContain("writer-1");
     expect(logs.some((message) => message.startsWith("Handoff writer for agent-a usage:"))).toBe(true);
     await controller.dispose();
