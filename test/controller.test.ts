@@ -38,10 +38,6 @@ function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files:
     async exists(file) {
       return files.has(file);
     },
-    async list(dir) {
-      const prefix = `${dir}/`;
-      return [...files.keys()].filter((file) => file.startsWith(prefix) && !file.slice(prefix.length).includes("/")).map((file) => file.slice(prefix.length));
-    },
   };
 }
 
@@ -51,7 +47,6 @@ function settings(overrides: Partial<BatonSettings> = {}) {
     handoffProfileId: "",
     conversationDetail: "standard",
     includeRepoState: true,
-    saveWriterPrompts: false,
     handoffDirectory: "",
     deleteStaleHandoffs: true,
     waitForSubagents: true,
@@ -135,7 +130,6 @@ async function waitFor(condition: () => boolean): Promise<void> {
   }
 }
 
-const PROMPT_FILE = "/home/.paseo/plugin-data/baton/writer-prompts/agent-a.md";
 const STATE_FILE = "/home/.paseo/plugin-data/baton/baton-state.json";
 
 function doneEntry() {
@@ -379,19 +373,24 @@ describe("BatonController", () => {
     await controller.dispose();
   });
 
-  it("removes the saved writer prompt along with an uncontinued handoff", async () => {
+  it("archives writers left from an earlier version or still running after a restart, and keeps a finished one under its parent", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
       [HANDOFF_PATH]: "# Task\n\nx",
-      [PROMPT_FILE]: "prompt with conversation text",
     });
     const controller = makeController(io);
-    const { paseo } = stubPaseo();
+    const { paseo, archived, agents } = stubPaseo();
+    const writer = { "baton-writer": "1" };
+    const child = { ...writer, "paseo.parent-agent-id": "agent-a" };
+    const writers = [
+      { id: "writer-standalone", status: "idle", labels: writer },
+      { id: "writer-running", status: "running", labels: child },
+      { id: "writer-finished", status: "idle", labels: child },
+    ];
+    agents.push(...(writers as never[]));
     await controller.ensureRecovered(paseo as never);
-    controller.onTurnStarted({ id: "agent-a" });
-    await waitFor(() => !io.files.has(PROMPT_FILE) && !io.files.has(HANDOFF_PATH));
-    expect(io.files.has(HANDOFF_PATH)).toBe(false);
-    expect(io.files.has(PROMPT_FILE)).toBe(false);
+    await waitFor(() => archived.length >= 2);
+    expect([...archived].sort()).toEqual(["writer-running", "writer-standalone"]);
     await controller.dispose();
   });
 
@@ -683,8 +682,6 @@ describe("BatonController", () => {
         "/work/.paseo/handoffs/old.md": "x",
         "/work/.paseo/handoffs/fresh.md": "x",
         "/work/.paseo/handoffs/continued.md": "x",
-        "/home/.paseo/plugin-data/baton/writer-prompts/old.md": "prompt",
-        "/home/.paseo/plugin-data/baton/writer-prompts/fresh.md": "prompt",
       });
       const controller = new BatonController({
         dataDir: "/home/.paseo/plugin-data/baton",
@@ -701,14 +698,11 @@ describe("BatonController", () => {
     }
 
     it("deletes unused handoffs older than the limit and keeps the rest", async () => {
-      const { io, state } = await run({ saveWriterPrompts: true });
+      const { io, state } = await run({});
       expect(io.files.has("/work/.paseo/handoffs/old.md")).toBe(false);
       expect(io.files.has("/work/.paseo/handoffs/fresh.md")).toBe(true);
       expect(io.files.has("/work/.paseo/handoffs/continued.md")).toBe(true);
       expect(Object.keys(state).sort()).toEqual(["continued", "fresh"]);
-      // The saved writer prompt holds conversation text, so it goes with its handoff.
-      expect(io.files.has("/home/.paseo/plugin-data/baton/writer-prompts/old.md")).toBe(false);
-      expect(io.files.has("/home/.paseo/plugin-data/baton/writer-prompts/fresh.md")).toBe(true);
     });
 
     it("never deletes a file that is not the agent's own handoff", async () => {
@@ -749,12 +743,6 @@ describe("BatonController", () => {
       await controller.dispose();
       const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
       expect(Object.keys(state)).toEqual(["old"]);
-    });
-
-    it("removes every saved writer prompt once saving them is turned off", async () => {
-      const { io } = await run({ saveWriterPrompts: false });
-      expect(io.files.has("/home/.paseo/plugin-data/baton/writer-prompts/old.md")).toBe(false);
-      expect(io.files.has("/home/.paseo/plugin-data/baton/writer-prompts/fresh.md")).toBe(false);
     });
 
     it("does nothing when cleanup is turned off", async () => {
@@ -981,7 +969,7 @@ describe("BatonController", () => {
         stub.paseo as never,
       );
       await controller.dispose();
-      return { ...stub, logs, files: io.files, refetches: () => refetches };
+      return { ...stub, logs, refetches: () => refetches };
     }
 
     it("reads as many pages as the detail level allows and warns when history was cut", async () => {
@@ -1030,14 +1018,6 @@ describe("BatonController", () => {
       const row = stub.appended.find((item) => item.kind === "baton-ready");
       expect((row?.data as { notice?: string }).notice).toContain("Earlier history was cut");
       await controller.dispose();
-    });
-
-    it("saves the writer's prompt only when asked to", async () => {
-      const off = await run({});
-      expect(off.files.has(PROMPT_FILE)).toBe(false);
-      const on = await run({ saveWriterPrompts: true });
-      expect(on.files.get(PROMPT_FILE)).toBe(String(on.created[0].prompt));
-      expect(on.files.get(PROMPT_FILE)).toContain("## Machine draft");
     });
 
     it("leaves the repo state out when it is turned off", async () => {
@@ -1265,7 +1245,8 @@ describe("BatonController", () => {
     expect(created[0].config).toEqual({ provider: "claude/claude-haiku-5-5", thinkingOptionId: "low" });
     // A subagent of the idle agent: Paseo shows it under that agent and sends no finished notification.
     expect(created[0].labels).toEqual({ "baton-writer": "1", "paseo.parent-agent-id": "agent-a" });
-    expect(archived).toContain("writer-1");
+    // The writer stays under the idle agent, so its prompt can be read there.
+    expect(archived).not.toContain("writer-1");
     expect(logs.some((message) => message.startsWith("Handoff writer for agent-a usage:"))).toBe(true);
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));

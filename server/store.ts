@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BatonState } from "../shared/baton";
 import { batonEntrySchema } from "../shared/baton";
@@ -10,8 +10,6 @@ export interface BatonStoreIo {
   rename(from: string, to: string): Promise<void>;
   unlink(file: string): Promise<void>;
   exists(file: string): Promise<boolean>;
-  /** File names in a folder; none when the folder does not exist. */
-  list(dir: string): Promise<string[]>;
 }
 
 export const nodeStoreIo: BatonStoreIo = {
@@ -29,14 +27,6 @@ export const nodeStoreIo: BatonStoreIo = {
   },
   async unlink(file) {
     await unlink(file);
-  },
-  async list(dir) {
-    try {
-      return await readdir(dir);
-    } catch (error) {
-      if (isMissing(error)) return [];
-      throw error;
-    }
   },
   async exists(file) {
     try {

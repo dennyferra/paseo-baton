@@ -32,7 +32,7 @@ import {
   isHandoffDocument,
   stampHandoffDocument,
 } from "./handoff";
-import { handoffFileName, handoffPathFor, resolveStateFile, writerPromptDir, writerPromptFile } from "./paths";
+import { handoffFileName, handoffPathFor, resolveStateFile } from "./paths";
 import { gatherRepoFacts } from "./repo-facts";
 import { isMissing, loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { previousHandoffPath, renderMechanicalHandoff } from "./timeline-summary";
@@ -170,7 +170,6 @@ export class BatonController {
       const document = timeline.length > 0 ? extractHandoffDocument(timeline) : await this.readWriterDocument(agent.id, paseo);
       await this.finalizeHandoff(originalAgentId, paseo, document);
       await this.logWriterUsage(originalAgentId, agent.id, paseo);
-      await this.archiveAgent(paseo, agent.id);
       return;
     }
     await this.beginIdle(agent, paseo);
@@ -193,7 +192,7 @@ export class BatonController {
     this.persistEntries();
     // The user kept working in this session, so a handoff nobody continued is stale.
     if (entry.status === "done" && entry.path && !entry.continuedAgentId) {
-      void this.removeStaleHandoff(entry.agentId, entry.path);
+      void this.removeStaleHandoff(entry.path);
     }
   }
 
@@ -220,7 +219,6 @@ export class BatonController {
 
   private async sweepOldHandoffs(): Promise<number> {
     const settings = await this.readSettings();
-    if (!settings.saveWriterPrompts) await this.removeSavedWriterPrompts();
     if (!settings.cleanupOldHandoffs) return 0;
     const cutoff = this.now() - settings.cleanupAfterDays * DAY_MS;
     let removed = 0;
@@ -239,18 +237,16 @@ export class BatonController {
           continue;
         }
       }
-      await this.removeWriterPrompt(entry.agentId);
       removed += 1;
     }
     if (removed > 0) await this.persistEntries();
     return removed;
   }
 
-  private async removeStaleHandoff(agentId: string, handoffPath: string): Promise<void> {
+  private async removeStaleHandoff(handoffPath: string): Promise<void> {
     try {
       if (!(await this.readSettings()).deleteStaleHandoffs) return;
       await this.io.unlink(handoffPath);
-      await this.removeWriterPrompt(agentId);
     } catch (error: unknown) {
       this.log(`Removing stale handoff ${handoffPath} failed: ${String(error)}`);
     }
@@ -588,7 +584,10 @@ export class BatonController {
       const { entries } = await paseo.agents.list({});
       for (const entry of entries) {
         knownAgentIds.add(entry.agent.id);
-        if (entry.agent.labels?.[BATON_WRITER_LABEL] === "1") {
+        // Writers of an earlier version stood alone, and one still running after a restart will not be heard
+        // from again; a finished writer under its parent stays so its prompt can be read.
+        const labels = entry.agent.labels;
+        if (labels?.[BATON_WRITER_LABEL] === "1" && (!labels[PARENT_AGENT_ID_LABEL] || entry.agent.status === "running")) {
           void this.archiveAgent(paseo, entry.agent.id);
         }
       }
@@ -838,49 +837,16 @@ export class BatonController {
     }
     if (!entry.workspaceId) throw new Error("No workspace for handoff writer.");
     const draft = await this.buildDraft(entry, handoffPath, paseo, settings);
-    const prompt = buildWriterHandoffPrompt(draft);
-    if (settings.saveWriterPrompts) await this.savePromptForDebugging(entry.agentId, prompt);
     const writer = await paseo.workspaces.ref(entry.workspaceId).agents.create({
       config: thinkingOptionId ? { provider: providerModel, thinkingOptionId } : { provider: providerModel },
       title: BATON_WRITER_TITLE,
       // Marked as a subagent of the idle agent, so Paseo shows it under that agent, does not notify when it
-      // finishes, and archives it with its parent.
+      // finishes, and archives it with its parent. It stays after it finishes, so its prompt can be read there.
       labels: { [BATON_WRITER_LABEL]: "1", [PARENT_AGENT_ID_LABEL]: entry.agentId },
-      prompt,
+      prompt: buildWriterHandoffPrompt(draft),
     });
     this.writerAgentIds.add(writer.id);
     this.writerByAgentId.set(writer.id, entry.agentId);
-  }
-
-  /** Prompts saved while the setting was on hold conversation text, so turning it off removes them. */
-  private async removeSavedWriterPrompts(): Promise<void> {
-    try {
-      const dir = writerPromptDir(this.dataDir);
-      for (const name of await this.io.list(dir)) {
-        if (name.endsWith(".md")) await this.io.unlink(path.join(dir, name));
-      }
-    } catch (error: unknown) {
-      this.log(`Removing the saved writer prompts failed: ${String(error)}`);
-    }
-  }
-
-  /** The saved writer prompt holds conversation text, so it goes when its handoff does. */
-  private async removeWriterPrompt(agentId: string): Promise<void> {
-    await this.io.unlink(writerPromptFile(this.dataDir, agentId)).catch((error: unknown) => {
-      if (!isMissing(error)) this.log(`Removing the saved writer prompt for ${agentId} failed: ${String(error)}`);
-    });
-  }
-
-  /** Keeps the writer's prompt, the latest one per agent, for people checking what the writer was given. */
-  private async savePromptForDebugging(agentId: string, prompt: string): Promise<void> {
-    const file = writerPromptFile(this.dataDir, agentId);
-    try {
-      await this.io.mkdir(dirname(file));
-      await this.io.writeFile(file, prompt);
-      this.log(`Saved the handoff writer's prompt for ${agentId} to ${file}`);
-    } catch (error: unknown) {
-      this.log(`Saving the writer prompt for ${agentId} failed: ${String(error)}`);
-    }
   }
 
   /** `useSavedFile` is false when an old file could not be cleared, so it must not pass for the new handoff. */

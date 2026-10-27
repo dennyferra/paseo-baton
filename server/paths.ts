@@ -14,16 +14,6 @@ export function resolveStateFile(dataDir: string): string {
   return path.join(dataDir, "baton-state.json");
 }
 
-/** The folder where writer prompts are kept when prompt saving is on. */
-export function writerPromptDir(dataDir: string): string {
-  return path.join(dataDir, "writer-prompts");
-}
-
-/** Where the writer's prompt is kept for one agent when prompt saving is on. */
-export function writerPromptFile(dataDir: string, agentId: string): string {
-  return path.join(writerPromptDir(dataDir), `${agentId}.md`);
-}
-
 export function handoffFileName(agentId: string): string {
   return `${agentId}.md`;
 }

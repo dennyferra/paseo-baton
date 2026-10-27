@@ -21,9 +21,10 @@ Its menu once a handoff exists, with turning handoffs off disabled:
 - **Automatic handoffs.** After an agent has been idle for a set time, Baton writes
   `<agentId>.md` to `.paseo/handoffs` in the agent's workspace (or your custom location) (Task, Context, Relevant files, Current
   state, What was tried, Decisions, Acceptance criteria, Constraints).
-- **Writer subagent.** A `[Handoff writer]` subagent of the idle agent drafts the document and is
-  archived after its turn. It shows under that agent's subagents while it runs and Paseo does not send a
-  "finished" notification for it, and the idle agent's chat only gains a "Handoff saved" row. If the writer fails, Baton
+- **Writer subagent.** A `[Handoff writer]` subagent of the idle agent drafts the document. It shows under that
+  agent's subagents and Paseo does not send a "finished" notification for it. Baton leaves it there after it
+  finishes, so you can open it to read exactly what it was given, and Paseo archives it with the idle agent.
+  The idle agent's own chat only gains a "Handoff saved" row. If the writer fails, Baton
   falls back to a mechanical summary of the conversation, with no model call.
 - **Review in the app.** Clicking the saved path opens the handoff rendered as markdown, with a
   button to open the file in your default app.
@@ -75,7 +76,6 @@ Under Settings -> Plugins -> Baton:
 | Agent profile | Same as running agent | Which of your Paseo agent profiles writes the handoff. Its provider, model and effort are used; its mode is ignored. |
 | Conversation detail | Standard | How much of the conversation the writer sees: Compact (about 30k characters), Standard (60k) or Full (150k). Long messages keep their start and end, and the writer is told when earlier history was left out. |
 | Include repo state | On | Adds the branch, changed files and recent commit titles from git to what the writer sees. Off keeps file names and commit messages out of the draft. |
-| Save the writer's prompt | Off | For debugging: keeps the latest prompt sent to the writer for each agent in `~/.paseo/plugin-data/baton/writer-prompts`. It contains conversation text. |
 | Storage location | `.paseo/handoffs` in each workspace | Where handoff files are saved. Accepts an absolute path, `~/...`, or a path relative to the workspace. If it can't be used, Baton saves to the default folder and the chat row says why. |
 | Delete unused handoffs | On | Deletes a handoff nobody continued once you keep working in the original session. Off keeps every file on disk. |
 | Ignored projects and workspaces | none | Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers workspaces created later. |
@@ -102,8 +102,7 @@ ignored workspaces are skipped.
 State lives in `~/.paseo/plugin-data/baton/baton-state.json`, so a daemon restart recovers pending
 handoffs and re-appends rows for saved ones. Entries are pruned when the agent is archived or after
 7 days. Baton reads agent lifecycle events and the conversation through Paseo, runs read-only `git` commands in
-the workspace, and writes handoff files and its own state file (and, only if you turn it on, the writer's
-prompt). It never reads credentials and never logs secrets.
+the workspace, and writes handoff files and its own state file. It never reads credentials and never logs secrets.
 
 See [OVERVIEW.md](OVERVIEW.md) for the plugin overview shipped with the package.
 
