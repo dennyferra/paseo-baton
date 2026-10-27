@@ -33,7 +33,7 @@ import {
   isHandoffDocument,
   stampHandoffDocument,
 } from "./handoff";
-import { handoffFileName, handoffPathFor, resolveStateFile } from "./paths";
+import { handoffFileName, handoffPathFor, resolveStateFile, writerPromptFile } from "./paths";
 import { gatherRepoFacts } from "./repo-facts";
 import { isMissing, loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { renderMechanicalHandoff } from "./timeline-summary";
@@ -813,16 +813,31 @@ export class BatonController {
     }
     if (!entry.workspaceId) throw new Error("No workspace for handoff writer.");
     const draft = await this.buildDraft(entry, handoffPath, paseo);
+    const prompt = buildWriterHandoffPrompt(draft);
+    await this.savePromptForDebugging(entry.agentId, prompt);
     const writer = await paseo.workspaces.ref(entry.workspaceId).agents.create({
       config: thinkingOptionId ? { provider: providerModel, thinkingOptionId } : { provider: providerModel },
       title: BATON_WRITER_TITLE,
       // Marked as a subagent of the idle agent, so Paseo shows it under that agent, does not notify when it
       // finishes, and archives it with its parent.
       labels: { [BATON_WRITER_LABEL]: "1", [PARENT_AGENT_ID_LABEL]: entry.agentId },
-      prompt: buildWriterHandoffPrompt(draft),
+      prompt,
     });
     this.writerAgentIds.add(writer.id);
     this.writerByAgentId.set(writer.id, entry.agentId);
+  }
+
+  /** Keeps the writer's prompt, the latest one per agent, for people checking what the writer was given. */
+  private async savePromptForDebugging(agentId: string, prompt: string): Promise<void> {
+    if (!(await this.readSettings()).saveWriterPrompts) return;
+    const file = writerPromptFile(this.dataDir, agentId);
+    try {
+      await this.io.mkdir(dirname(file));
+      await this.io.writeFile(file, prompt);
+      this.log(`Saved the handoff writer's prompt for ${agentId} to ${file}`);
+    } catch (error: unknown) {
+      this.log(`Saving the writer prompt for ${agentId} failed: ${String(error)}`);
+    }
   }
 
   private async finalizeHandoff(agentId: string, paseo: PaseoApi, document: string | null = null): Promise<void> {

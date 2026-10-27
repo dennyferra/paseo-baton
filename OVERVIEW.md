@@ -60,6 +60,9 @@ Settings live under Settings -> Plugins -> Baton.
   is longer than what was read, the writer is told and the "Handoff saved" row says earlier history was cut.
 - **Include repo state** (`includeRepoState`, default on): adds the branch, changed files and recent commit
   titles from git to what the writer sees. Turn it off to keep file names and commit messages out of it.
+- **Save the writer's prompt** (`saveWriterPrompts`, default off): keeps the latest prompt sent to the writer for
+  each agent as `~/.paseo/plugin-data/baton/writer-prompts/<agentId>.md`, so you can check what it was given.
+  The file contains conversation text and stays on your machine until you delete it.
 - **Storage location** (`handoffDirectory`, default empty): where handoff files are saved. Empty means
   `.paseo/handoffs` inside each workspace. A custom value can be an absolute path, `~/...`, or a path
   relative to the workspace. Files are named `<agentId>.md`. Existing handoffs keep their saved path.

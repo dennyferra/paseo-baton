@@ -47,6 +47,7 @@ function settings(overrides: Partial<BatonSettings> = {}) {
     handoffProfileId: "",
     conversationDetail: "standard",
     includeRepoState: true,
+    saveWriterPrompts: false,
     handoffDirectory: "",
     deleteStaleHandoffs: true,
     waitForSubagents: true,
@@ -130,6 +131,7 @@ async function waitFor(condition: () => boolean): Promise<void> {
   }
 }
 
+const PROMPT_FILE = "/home/.paseo/plugin-data/baton/writer-prompts/agent-a.md";
 const STATE_FILE = "/home/.paseo/plugin-data/baton/baton-state.json";
 
 function doneEntry() {
@@ -948,7 +950,7 @@ describe("BatonController", () => {
         stub.paseo as never,
       );
       await controller.dispose();
-      return { ...stub, logs, refetches: () => refetches };
+      return { ...stub, logs, files: io.files, refetches: () => refetches };
     }
 
     it("reads as many pages as the detail level allows and warns when history was cut", async () => {
@@ -997,6 +999,14 @@ describe("BatonController", () => {
       const row = stub.appended.find((item) => item.kind === "baton-ready");
       expect((row?.data as { notice?: string }).notice).toContain("Earlier history was cut");
       await controller.dispose();
+    });
+
+    it("saves the writer's prompt only when asked to", async () => {
+      const off = await run({});
+      expect(off.files.has(PROMPT_FILE)).toBe(false);
+      const on = await run({ saveWriterPrompts: true });
+      expect(on.files.get(PROMPT_FILE)).toBe(String(on.created[0].prompt));
+      expect(on.files.get(PROMPT_FILE)).toContain("## Machine draft");
     });
 
     it("leaves the repo state out when it is turned off", async () => {
