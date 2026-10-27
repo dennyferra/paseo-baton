@@ -10,10 +10,12 @@ or hand a task to a different model.
 ## How it works
 
 When an agent turn ends, Baton starts an idle timer. If no new turn starts before it fires, a
-short-lived writer agent drafts the handoff, and Baton saves it as `<agentId>.md` in `.paseo/handoffs` in its
-workspace (or your configured storage location), using the template Task, Context, Relevant files, Current state, What was tried,
-Decisions, Acceptance criteria, and Constraints. If the agent cannot answer, Baton writes a
-mechanical handoff from the conversation snapshot instead, with no model call.
+short-lived writer subagent drafts the handoff from the conversation, and Baton saves it as `<agentId>.md` in
+`.paseo/handoffs` in its workspace (or your configured storage location), using the template Task, Context,
+Relevant files, Current state, What was tried, Decisions, Acceptance criteria, and Constraints. If the writer
+fails or saves nothing usable, Baton writes a mechanical handoff from the conversation instead, with no model
+call. A session started with Continue from handoff gets the handoff it came from included in the next draft, so
+the original task is not lost down a chain of handoffs.
 
 Once the file exists, a "Handoff saved" row appears in that agent's chat; clicking its path opens an in-app
 view of the handoff for review, with a button to open the file in your default app. Every agent has a **Baton**
@@ -50,12 +52,13 @@ Settings live under Settings -> Plugins -> Baton. Changes are saved automaticall
   still running after 4 hours, one running when the plugin restarted, and provider-internal subagents
   (such as Claude's Task tool) are not waited for. "Create handoff now" ignores this.
 - **Handoff writer** (`handoffProfileId`): pick one of your Paseo agent profiles. Its provider,
-  model and effort are used; its mode is ignored. The writer never needs file access: it replies with the document and Baton writes the file. The default,
-  "Same as running agent", uses the idle agent's own model and effort. The writer is a short-lived
-  subagent of the idle agent. It appears under that agent's subagents, Paseo sends no "finished" notification for
-  it, and Baton leaves it there after it finishes so you can open it and read exactly what it was given. Only the latest
-  writer for an agent is kept, because starting its next handoff archives the earlier one, and Paseo archives it
-  with the idle agent, and the idle agent's own chat only shows the Handoff saved row.
+  model and effort are used; its mode is ignored. The default, "Same as running agent", uses the idle agent's
+  own model and effort. The writer is asked to reply with the document, and Baton also accepts a file the writer
+  saved itself. It is a short-lived subagent of the idle agent: it appears under that agent's subagents, Paseo
+  sends no "finished" notification for it, and Baton leaves it there after it finishes so you can open it and
+  read exactly what it was given. Only the latest writer for an agent is kept, because starting the next
+  handoff archives the earlier one, and Paseo archives the rest with the idle agent. The idle agent's own
+  chat only shows the Handoff saved row.
 - **Conversation detail** (`conversationDetail`, default Standard): how much of the conversation the writer
   sees. Compact reads up to 1,000 history entries and keeps about 30,000 characters, Standard 2,000 entries
   and 60,000, Full 5,000 entries and 150,000. Long messages keep their start and end. When the conversation
@@ -83,22 +86,26 @@ Settings live under Settings -> Plugins -> Baton. Changes are saved automaticall
 
 ## Data
 
-Writing a handoff sends part of the conversation to an agent provider. The writer agent receives a
-draft that Baton builds from the agent's conversation, which it reads back from Paseo when it writes the
-handoff: the first request, the user's messages and the agent's replies (long ones keep their start and
-end, within the size set by Conversation detail, with the oldest dropped first), the files the agent
-touched, a short list of its recent tool calls that name a file, URL or label (repeats are counted, and shell
-commands are left out), the agent's latest task list and plan, error messages (cut short), failed shell
-calls named only by program and exit code, never by command line, short descriptions of work handed to
-sub-agents, a note when the agent's own conversation was compacted, and, unless you turn it off, the repo
-state. When a session was
-started with Continue from handoff, its first message only points to the handoff file, so Baton also includes
-that handoff's text. Tool output is not included. Baton gathers the repo state itself with
-read-only `git` commands (`branch --show-current`, `status --short`, `log -n 8`) in the workspace, with
-`core.fsmonitor` off and no optional locks so the repository's own configuration cannot run anything. The
-writer runs on the provider and model of the profile you pick, or on the idle agent's own provider and model
-by default, so that provider sees this text. If the writer fails or times out, Baton builds a fallback
-summary locally and makes no further model call, but a failed writer attempt may already have sent the
+Writing a handoff sends part of the conversation to an agent provider. The writer agent receives a draft that
+Baton builds from the agent's conversation, which it reads back from Paseo when it writes the handoff:
+
+- the first request, the user's messages and the agent's replies (long ones keep their start and end, within the
+  size set by Conversation detail, with the oldest dropped first);
+- the files the agent touched, and a short list of its recent tool calls that name a file, URL or label
+  (repeats are counted, and shell commands are left out);
+- the agent's latest task list and plan, error messages (cut short), failed shell calls named only by program
+  and exit code, never by command line, short descriptions of work handed to sub-agents, and a note when the
+  agent's own conversation was compacted;
+- unless you turn it off, the repo state, which Baton gathers itself with read-only `git` commands
+  (`branch --show-current`, `status --short`, `log -n 8`) in the workspace, with `core.fsmonitor` off and no
+  optional locks so the repository's own configuration cannot run anything;
+- when the session was started with Continue from handoff, the text of the handoff it came from. Baton reads
+  only a handoff it recorded or a `.md` file in a folder called `handoffs`, by an absolute path.
+
+Tool output is not included. The writer runs on the provider and model of the profile you pick, or on the idle
+agent's own provider and model by default, so that provider sees this text. The writer subagent keeps the prompt
+it was given, visible in the Paseo app until it is archived. If the writer fails or times out, Baton builds a
+fallback summary locally and makes no further model call, but a failed writer attempt may already have sent the
 draft to its provider.
 
 Each handoff file starts with a `Created:` timestamp, and the "Handoff saved" row shows when it was

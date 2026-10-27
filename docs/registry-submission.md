@@ -19,6 +19,13 @@ source: the reviewer inspects the published package, and releases carry provenan
 
 **Categories:** tick **Orchestration** first (the first tick is the main one), then **Utils**.
 
+## Updating the listing
+
+Baton is listed with `paseo-baton` on npm as its source, so the registry's bump workflow proposes each new
+npm version in a pull request (twice a day) and a reviewer approves it. You do not resubmit. If a listing was
+ever pinned to a Git commit instead, updates are manual: open a new submission issue with the same form and
+`paseo-baton` as the source.
+
 ## Comment to add after the issue opens
 
 This answers the review policy's checklist (https://github.com/getpaseo/plugins/blob/main/REVIEW.md).
@@ -49,6 +56,11 @@ For review:
 - Draft contents: the writer's draft also carries the agent's latest task list and plan, error
   messages (cut to 300 characters) and failed shell calls as program name and exit code only,
   never the command line or tool output.
+- Subagent: for each handoff it starts one short-lived subagent of the idle agent (labelled baton-writer, with
+  a parent label), using the user's own agent profile or the idle agent's provider, under the user's normal
+  permission mode. The writer is told not to use tools and to reply with the document, and Baton accepts a
+  file it saved itself at the handoff path. Baton archives only the earlier writers it created for the same
+  agent, and leaves the finished one in place so the user can read its prompt.
 - No runtime software installation. The package is readable TypeScript with no bundling.
 ```
 
@@ -57,4 +69,6 @@ For review:
 - `OVERVIEW.md` has no `paseo plugin add`, `npm install` or `npm i` (the validator rejects them).
 - `paseo-plugin.json` lists the screenshots under `media`, and `package.json` `files` includes `assets/`.
 - The version on npm is the one you want reviewed. The reviewer records that exact version.
+- `npm pack --dry-run` lists every new source file (for example `server/repo-facts.ts` and `server/timeline-summary.ts`).
+- `paseo-plugin.json` has the icon and `requirements.paseo` matches the README and OVERVIEW.
 - Re-check each statement in the comment above against the code if behavior has changed.

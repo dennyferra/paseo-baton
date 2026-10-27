@@ -25,8 +25,15 @@ Its menu once a handoff exists, with turning handoffs off disabled:
   agent's subagents and Paseo does not send a "finished" notification for it. Baton leaves it there after it
   finishes, so you can open it to read exactly what it was given. Only the latest writer for an agent is kept:
   starting its next handoff archives the earlier one, and Paseo archives the rest with the idle agent.
-  The idle agent's own chat only gains a "Handoff saved" row. If the writer fails, Baton
-  falls back to a mechanical summary of the conversation, with no model call.
+  The idle agent's own chat only gains a "Handoff saved" row. If the writer fails or saves nothing usable,
+  Baton falls back to a mechanical summary of the conversation, with no model call.
+- **What the writer sees.** The first request, your messages and the agent's replies, the files it
+  touched, its recent tool calls that name a file or URL, its latest task list and plan, errors and failed
+  shell programs (never command lines), sub-agent work, the repo state from `git`, and, when the session was
+  started with **Continue from handoff**, the handoff it came from. How much of that depends on the
+  Conversation detail setting, and the handoff says when earlier history was left out.
+- **Timestamps.** Each handoff file starts with a `Created:` line, and the "Handoff saved" row shows when it was
+  saved.
 - **Review in the app.** Clicking the saved path opens the handoff rendered as markdown, with a
   button to open the file in your default app.
 - **Baton chip.** Every agent gets a **Baton** chip in the composer with a menu:
@@ -73,13 +80,18 @@ Under Settings -> Plugins -> Baton:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Idle delay | 15 min (1-240) | How long an agent sits idle before a handoff is written. Independent of any provider's prompt cache. |
+| Idle delay | 15 min (1-240) | How long an agent sits idle before a handoff is written. |
+| Wait for subagents | On | If agents the idle agent started are still working when the countdown ends, restart it instead of writing the handoff. |
 | Agent profile | Same as running agent | Which of your Paseo agent profiles writes the handoff. Its provider, model and effort are used; its mode is ignored. |
 | Conversation detail | Standard | How much of the conversation the writer sees: Compact (about 30k characters), Standard (60k) or Full (150k). Long messages keep their start and end, and the writer is told when earlier history was left out. |
 | Include repo state | On | Adds the branch, changed files and recent commit titles from git to what the writer sees. Off keeps file names and commit messages out of the draft. |
 | Storage location | `.paseo/handoffs` in each workspace | Where handoff files are saved. Accepts an absolute path, `~/...`, or a path relative to the workspace. If it can't be used, Baton saves to the default folder and the chat row says why. |
 | Delete unused handoffs | On | Deletes a handoff nobody continued once you keep working in the original session. Off keeps every file on disk. |
+| Clean up old handoffs | On, after 3 days (1-365) | Once a day and at start, deletes handoff files nobody continued that are older than the limit. |
 | Ignored projects and workspaces | none | Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers workspaces created later. |
+| Ignore new projects by default | Off | Projects that appear later start ignored until you switch them on. Projects that already exist keep their setting. |
+
+Changes are saved automatically a moment after you make them.
 
 ## Keep handoffs out of version control
 
@@ -96,9 +108,10 @@ Or set a storage location outside your repositories in the plugin settings, such
 ## How it works
 
 Baton listens to agent lifecycle events. When a turn ends it starts an idle timer, and a new turn
-cancels it. When the timer fires on an idle agent, Baton asks the writer agent for the document,
-saves it to the workspace, and appends the "Handoff saved" row. Subagents, the writer itself and
-ignored workspaces are skipped.
+cancels it. When the timer fires on an idle agent, Baton reads its conversation back from Paseo, starts a
+writer subagent with a draft built from it, and takes the document the writer returns (or the file it
+saved itself), stamps it with a `Created:` line, saves it to the workspace and appends the "Handoff saved"
+row. Subagents, writers and ignored workspaces are skipped.
 
 State lives in `~/.paseo/plugin-data/baton/baton-state.json`, so a daemon restart recovers pending
 handoffs and re-appends rows for saved ones. Entries are pruned when the agent is archived or after
@@ -117,7 +130,7 @@ npm test
 
 Layout:
 
-- `server/` - controller, state store, handoff prompt and timeline summary (daemon side)
+- `server/` - controller, state store, handoff prompt, timeline summary and repo state (daemon side)
 - `client/` - Baton chip, chat row, handoff viewer and settings screen (app side)
 - `shared/` - Zod contracts, RPCs and settings shared by both sides; no runtime code from either side
 - `docs/` - maintainer notes, such as the registry submission text (not shipped in the package)
@@ -127,8 +140,8 @@ Server code must not import client code, and the reverse.
 
 ## Limitations
 
-- Paseo gives plugins no way to open a file in the host's own file tab, so Baton renders the
-  handoff itself. It supports headings, lists, quotes, code blocks, tables and basic inline styles.
+- Paseo gives plugins no way to open a file in the host's own file tab, so Baton shows the handoff in
+  its own screen, rendered with Paseo's Markdown component.
 - Chat rows can't be removed, so the "Handoff saved" row stays after a handoff is cleaned up and its
   link then reports the handoff can no longer be opened.
 - The Baton chip's state refreshes when an agent's status changes, so a menu left open can be stale
