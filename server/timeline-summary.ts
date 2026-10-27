@@ -1,4 +1,7 @@
 import type { AgentTimelineItem, ToolCallTimelineItem } from "@getpaseo/protocol/agent-types";
+import { DETAIL_LIMITS, type DraftLimits } from "../shared/baton";
+
+type TranscriptLimits = Pick<DraftLimits, "maxChars" | "maxUserChars" | "maxAssistantChars">;
 
 export interface TimelineMessage {
   role: "user" | "assistant";
@@ -73,33 +76,20 @@ export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40
 
 const MAX_FILES = 100;
 
-export interface TranscriptLimits {
-  /** Total characters kept; the oldest messages are dropped first. */
-  maxChars: number;
-  /** What the user wrote is the spec, so it is cut far less than the agent's replies. */
-  maxUserChars: number;
-  maxAssistantChars: number;
-}
-
 const CUT_MARKER = " (...cut...) ";
 
 /** Keeps the start and the end of a long text, so a question after a big paste is not lost. */
 export function cutMiddle(text: string, max: number): string {
   if (text.length <= max) return text;
-  const keep = Math.max(max - CUT_MARKER.length, 0);
+  if (max <= CUT_MARKER.length) return text.slice(0, Math.max(max, 0));
+  const keep = max - CUT_MARKER.length;
   const head = Math.ceil(keep / 2);
   return `${text.slice(0, head)}${CUT_MARKER}${text.slice(text.length - (keep - head))}`;
 }
 
-export const DEFAULT_TRANSCRIPT_LIMITS: TranscriptLimits = {
-  maxChars: 60_000,
-  maxUserChars: 8_000,
-  maxAssistantChars: 3_000,
-};
-
 export function transcriptExcerpt(
   timeline: readonly AgentTimelineItem[],
-  limits: TranscriptLimits = DEFAULT_TRANSCRIPT_LIMITS,
+  limits: TranscriptLimits = DETAIL_LIMITS.standard,
 ): string {
   const messages = messageTexts(timeline);
   const kept: string[] = [];
@@ -128,13 +118,13 @@ export interface MechanicalHandoffInput {
   /** Branch, changed files and recent commits, gathered by Baton. */
   repoFacts?: string;
   /** Limits on what the draft carries; the standard ones when omitted. */
-  limits?: TranscriptLimits & { maxTextChars: number };
+  limits?: Omit<DraftLimits, "historyEntries">;
   /** True when the conversation was longer than what could be read, so the first request may be missing. */
   historyCut?: boolean;
 }
 
 export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
-  const limits = input.limits ?? { ...DEFAULT_TRANSCRIPT_LIMITS, maxTextChars: 8_000 };
+  const limits = input.limits ?? DETAIL_LIMITS.standard;
   const capped = (text: string | null) => (text === null ? "Not captured." : cutMiddle(text, limits.maxTextChars));
   const task = capped(firstUserText(input.timeline));
   const currentState = capped(lastAssistantText(input.timeline));

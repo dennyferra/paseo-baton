@@ -75,6 +75,7 @@ async function openFileWithOs(filePath: string): Promise<void> {
 
 /** Timeline entries are read back in pages of this size, as many as the conversation detail level allows. */
 const TIMELINE_PAGE_SIZE = 200;
+/** The writer's own conversation is short: its prompt and one reply. */
 const WRITER_TIMELINE_PAGES = 2;
 const HISTORY_CUT_NOTICE = "Earlier history was cut, so the task may be incomplete.";
 const WRITER_READ_ATTEMPTS = 3;
@@ -101,9 +102,8 @@ export class BatonController {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private fallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private pendingHandoff = new Set<string>();
-  private lastTimeline = new Map<string, readonly AgentTimelineItem[]>();
-  /** Agents whose conversation was longer than the read limit, so the first request may be missing. */
-  private historyCut = new Set<string>();
+  /** The conversation read back for each agent; `cut` means older entries were left out, so the first request may be missing. */
+  private lastTimeline = new Map<string, { items: readonly AgentTimelineItem[]; cut: boolean }>();
   private workspaceDirCache = new Map<string, string | null>();
   private writerAgentIds = new Set<string>();
   private pathNotices = new Map<string, string>();
@@ -157,7 +157,7 @@ export class BatonController {
     await this.ensureRecovered(paseo);
     if (this.disposed) return;
     // Newer Paseo versions send an empty timeline here, so an empty one is read back when it is needed.
-    if (timeline.length > 0) this.lastTimeline.set(agent.id, timeline);
+    if (timeline.length > 0) this.lastTimeline.set(agent.id, { items: timeline, cut: false });
     else this.lastTimeline.delete(agent.id);
     if (this.pendingHandoff.has(agent.id)) {
       await this.finalizeHandoff(agent.id, paseo);
@@ -277,7 +277,7 @@ export class BatonController {
       throw new Error("This project is ignored in Baton settings.");
     }
     this.clearTimer(agentId);
-    await this.ensureTimeline(agentId, paseo);
+    await this.ensureTimeline(agentId, paseo, settings);
     const entry = createPendingEntry({
       agentId,
       workspaceId: agent.workspaceId,
@@ -327,35 +327,28 @@ export class BatonController {
 
   // Turn events may carry no conversation (always so on recent Paseo, and after a plugin reload),
   // so read the recent conversation back when a handoff is about to be written.
-  private async ensureTimeline(agentId: string, paseo: PaseoApi): Promise<void> {
-    if ((this.lastTimeline.get(agentId)?.length ?? 0) > 0) return;
-    const { historyPages } = DETAIL_LIMITS[(await this.readSettings()).conversationDetail];
-    const { items, cut } = await this.fetchTimeline(agentId, paseo, historyPages);
-    if (items.length > 0) this.lastTimeline.set(agentId, items);
-    if (cut) this.historyCut.add(agentId);
-    else this.historyCut.delete(agentId);
+  private async ensureTimeline(agentId: string, paseo: PaseoApi, settings: BatonSettings): Promise<void> {
+    if ((this.lastTimeline.get(agentId)?.items.length ?? 0) > 0) return;
+    const pages = Math.ceil(DETAIL_LIMITS[settings.conversationDetail].historyEntries / TIMELINE_PAGE_SIZE);
+    const { items, cut } = await this.fetchTimeline(agentId, paseo, pages);
+    if (items.length > 0) this.lastTimeline.set(agentId, { items, cut });
   }
 
   /** The machine draft: what Baton knows of the conversation, within the configured detail level. */
   private async buildDraft(entry: BatonEntry, handoffPath: string, paseo: PaseoApi): Promise<string> {
-    await this.ensureTimeline(entry.agentId, paseo);
     const settings = await this.readSettings();
-    const detail = DETAIL_LIMITS[settings.conversationDetail];
+    await this.ensureTimeline(entry.agentId, paseo, settings);
+    const conversation = this.lastTimeline.get(entry.agentId);
     const cwd = entry.cwd ?? path.dirname(path.dirname(handoffPath));
     return renderMechanicalHandoff({
       agentId: entry.agentId,
       workspaceId: entry.workspaceId,
       cwd,
       provider: null,
-      timeline: this.lastTimeline.get(entry.agentId) ?? [],
+      timeline: conversation?.items ?? [],
       now: this.now(),
-      limits: {
-        maxChars: detail.transcriptChars,
-        maxUserChars: detail.userChars,
-        maxAssistantChars: detail.assistantChars,
-        maxTextChars: detail.textChars,
-      },
-      historyCut: this.historyCut.has(entry.agentId),
+      limits: DETAIL_LIMITS[settings.conversationDetail],
+      historyCut: conversation?.cut ?? false,
       repoFacts: settings.includeRepoState ? await gatherRepoFacts(cwd) : "",
     });
   }
@@ -934,7 +927,6 @@ export class BatonController {
     this.dropEntry(agentId);
     this.pendingHandoff.delete(agentId);
     this.lastTimeline.delete(agentId);
-    this.historyCut.delete(agentId);
     this.writerAgentIds.delete(agentId);
     this.writerByAgentId.delete(agentId);
   }
@@ -1009,6 +1001,15 @@ export class BatonController {
     return dir;
   }
 
+  /** The notices for an agent's row: why the handoff went to another folder, and that history was cut. */
+  private takeNotice(agentId: string): string {
+    const notice = [this.pathNotices.get(agentId), this.lastTimeline.get(agentId)?.cut ? HISTORY_CUT_NOTICE : undefined]
+      .filter(Boolean)
+      .join(" ");
+    this.pathNotices.delete(agentId);
+    return notice;
+  }
+
   private async appendRow(
     paseo: PaseoApi,
     agentId: string,
@@ -1021,12 +1022,8 @@ export class BatonController {
     const savedAt = this.entries.get(agentId)?.savedAt;
     if (savedAt && !data.savedAt) data = { ...data, savedAt };
     if (continuedTitle && !data.continuedTitle) data = { ...data, continuedTitle };
-    const notice = [this.pathNotices.get(agentId), this.historyCut.has(agentId) ? HISTORY_CUT_NOTICE : undefined]
-      .filter(Boolean)
-      .join(" ");
+    const notice = this.takeNotice(agentId);
     if (notice) data = { ...data, notice };
-    this.pathNotices.delete(agentId);
-    this.historyCut.delete(agentId);
     try {
       await paseo.agents.ref(agentId).timeline.append({
         type: "plugin",

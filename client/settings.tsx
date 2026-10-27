@@ -30,17 +30,16 @@ interface WorkspaceChoice {
 
 const SAME_AS_RUNNING = "";
 
-const DETAIL_NAMES: Record<DetailLevel, string> = { compact: "Compact", standard: "Standard", full: "Full" };
-const DETAIL_NOTES: Record<DetailLevel, string> = {
-  compact: "Cheapest, least detail.",
-  standard: "A good balance.",
-  full: "Most detail, higher writer cost.",
+const DETAIL_INFO: Record<DetailLevel, { name: string; note: string }> = {
+  compact: { name: "Compact", note: "Cheapest, least detail." },
+  standard: { name: "Standard", note: "A good balance." },
+  full: { name: "Full", note: "Most detail, higher writer cost." },
 };
 
-// e.g. "Up to about 60k characters of conversation, 10 pages of history. A good balance."
+// e.g. "Up to about 60k characters of conversation, 2000 history entries. A good balance."
 function describeDetail(level: DetailLevel): string {
   const limits = DETAIL_LIMITS[level];
-  return `Up to about ${Math.round(limits.transcriptChars / 1000)}k characters of conversation, ${limits.historyPages * 200} history entries. ${DETAIL_NOTES[level]}`;
+  return `Up to about ${Math.round(limits.maxChars / 1000)}k characters of conversation, ${limits.historyEntries} history entries. ${DETAIL_INFO[level].note}`;
 }
 
 type ProviderSnapshot = Awaited<ReturnType<PaseoApi["providers"]["snapshot"]>>;
@@ -334,11 +333,11 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
               key={level}
               accessibilityRole="radio"
               accessibilityState={{ selected }}
-              accessibilityLabel={`${DETAIL_NAMES[level]}: ${describeDetail(level)}`}
+              accessibilityLabel={`${DETAIL_INFO[level].name}: ${describeDetail(level)}`}
               onPress={() => update({ conversationDetail: level })}
               style={[styles.profileRow, selected ? styles.profileRowSelected : null]}
             >
-              <Text style={styles.profileName}>{selected ? `\u2713 ${DETAIL_NAMES[level]}` : DETAIL_NAMES[level]}</Text>
+              <Text style={styles.profileName}>{selected ? `\u2713 ${DETAIL_INFO[level].name}` : DETAIL_INFO[level].name}</Text>
               <Text style={styles.hint}>{describeDetail(level)}</Text>
             </Pressable>
           );

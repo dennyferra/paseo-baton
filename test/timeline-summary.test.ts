@@ -149,6 +149,12 @@ describe("cutMiddle", () => {
     expect(cutMiddle("short", 100)).toBe("short");
   });
 
+  it("never returns more than the limit, even a limit shorter than the marker", () => {
+    expect(cutMiddle("x".repeat(100), 5)).toBe("xxxxx");
+    expect(cutMiddle("x".repeat(100), 0)).toBe("");
+    expect(cutMiddle("x".repeat(100), 13).length).toBeLessThanOrEqual(13);
+  });
+
   it("keeps the start and the end of long text", () => {
     const text = `START ${"x".repeat(500)} the real question?`;
     const cut = cutMiddle(text, 100);

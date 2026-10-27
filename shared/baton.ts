@@ -55,23 +55,24 @@ export const SUBAGENT_WAIT_LIMIT_MS = 4 * 60 * 60 * 1000;
 export const DETAIL_LEVELS = ["compact", "standard", "full"] as const;
 export type DetailLevel = (typeof DETAIL_LEVELS)[number];
 
-/** What each conversation detail level lets the handoff writer see, in characters unless noted. */
-export interface DetailLimits {
+/** What a handoff draft carries, in characters unless noted. */
+export interface DraftLimits {
   /** The whole transcript; the oldest messages are dropped first. */
-  transcriptChars: number;
+  maxChars: number;
   /** One user message; what the user wrote is the spec, so it is cut least. */
-  userChars: number;
-  assistantChars: number;
+  maxUserChars: number;
+  maxAssistantChars: number;
   /** The Task and Current state text. */
-  textChars: number;
-  /** Pages of 200 timeline entries read back from Paseo. */
-  historyPages: number;
+  maxTextChars: number;
+  /** Timeline entries read back from Paseo. */
+  historyEntries: number;
 }
 
-export const DETAIL_LIMITS: Record<DetailLevel, DetailLimits> = {
-  compact: { transcriptChars: 30_000, userChars: 4_000, assistantChars: 1_000, textChars: 4_000, historyPages: 5 },
-  standard: { transcriptChars: 60_000, userChars: 8_000, assistantChars: 3_000, textChars: 8_000, historyPages: 10 },
-  full: { transcriptChars: 150_000, userChars: 20_000, assistantChars: 6_000, textChars: 20_000, historyPages: 25 },
+/** What each conversation detail level lets the handoff writer see. */
+export const DETAIL_LIMITS: Record<DetailLevel, DraftLimits> = {
+  compact: { maxChars: 30_000, maxUserChars: 4_000, maxAssistantChars: 1_000, maxTextChars: 4_000, historyEntries: 1_000 },
+  standard: { maxChars: 60_000, maxUserChars: 8_000, maxAssistantChars: 3_000, maxTextChars: 8_000, historyEntries: 2_000 },
+  full: { maxChars: 150_000, maxUserChars: 20_000, maxAssistantChars: 6_000, maxTextChars: 20_000, historyEntries: 5_000 },
 };
 
 export const batonSettingsSchema = z.object({

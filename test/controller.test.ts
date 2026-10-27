@@ -961,6 +961,41 @@ describe("BatonController", () => {
       expect(full.refetches()).toBe(25);
     });
 
+    it("keeps the cut-history warning when the handoff is started from the menu", async () => {
+      const io = memoryIo();
+      const controller = new BatonController({
+        dataDir: "/home/.paseo/plugin-data/baton",
+        settings: settings({ conversationDetail: "compact" }),
+        log: () => {},
+        io,
+        now: () => NOW,
+      });
+      const stub = stubPaseo({ createId: "writer-1" });
+      const originalRef = stub.paseo.agents.ref;
+      stub.paseo.agents.ref = (agentId: string) => {
+        const handle = originalRef(agentId);
+        if (agentId === "agent-a") {
+          handle.timeline.refetch = (async () => ({
+            entries: [{ item: { type: "user_message", text: "A request" } }],
+            hasOlder: true,
+            startCursor: { epoch: "e", seq: 5 },
+          })) as never;
+        }
+        return handle;
+      };
+      await controller.createNow({ agentId: "agent-a" }, stub.paseo as never);
+      await waitFor(() => stub.created.length > 0);
+      expect(String(stub.created[0].prompt)).toContain("Earlier history was not read");
+      await controller.onTurnEnded(
+        { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
+        [{ type: "assistant_message", text: "# Task\nShip it" }],
+        stub.paseo as never,
+      );
+      const row = stub.appended.find((item) => item.kind === "baton-ready");
+      expect((row?.data as { notice?: string }).notice).toContain("Earlier history was cut");
+      await controller.dispose();
+    });
+
     it("leaves the repo state out when it is turned off", async () => {
       const withFacts = await run({});
       expect(String(withFacts.created[0].prompt)).toContain("## Repo state");
