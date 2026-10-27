@@ -255,6 +255,11 @@ describe("toolSummaries noise", () => {
     ]);
   });
 
+  it("drops the query string and fragment from a fetched URL, which can hold tokens", () => {
+    const items = timeline([call("1", "fetch", { type: "fetch", url: "https://api.example.com/v1/items?token=SECRET#frag" })]);
+    expect(toolSummaries(items)).toEqual(["- fetch https://api.example.com/v1/items"]);
+  });
+
   it("keeps the status of a call that did not complete", () => {
     const items = timeline([call("1", "write", { type: "write", filePath: "a.ts" }, "failed")]);
     expect(toolSummaries(items)).toEqual(["- write a.ts (failed)"]);

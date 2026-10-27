@@ -101,8 +101,9 @@ ignored workspaces are skipped.
 
 State lives in `~/.paseo/plugin-data/baton/baton-state.json`, so a daemon restart recovers pending
 handoffs and re-appends rows for saved ones. Entries are pruned when the agent is archived or after
-7 days. Baton only reads lifecycle events and writes handoff files and its own state file. It never
-reads credentials and never logs secrets.
+7 days. Baton reads agent lifecycle events and the conversation through Paseo, runs read-only `git` commands in
+the workspace, and writes handoff files and its own state file (and, only if you turn it on, the writer's
+prompt). It never reads credentials and never logs secrets.
 
 See [OVERVIEW.md](OVERVIEW.md) for the plugin overview shipped with the package.
 

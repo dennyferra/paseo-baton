@@ -38,6 +38,10 @@ function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files:
     async exists(file) {
       return files.has(file);
     },
+    async list(dir) {
+      const prefix = `${dir}/`;
+      return [...files.keys()].filter((file) => file.startsWith(prefix) && !file.slice(prefix.length).includes("/")).map((file) => file.slice(prefix.length));
+    },
   };
 }
 
@@ -385,7 +389,7 @@ describe("BatonController", () => {
     const { paseo } = stubPaseo();
     await controller.ensureRecovered(paseo as never);
     controller.onTurnStarted({ id: "agent-a" });
-    await waitFor(() => !io.files.has(PROMPT_FILE));
+    await waitFor(() => !io.files.has(PROMPT_FILE) && !io.files.has(HANDOFF_PATH));
     expect(io.files.has(HANDOFF_PATH)).toBe(false);
     expect(io.files.has(PROMPT_FILE)).toBe(false);
     await controller.dispose();
@@ -697,7 +701,7 @@ describe("BatonController", () => {
     }
 
     it("deletes unused handoffs older than the limit and keeps the rest", async () => {
-      const { io, state } = await run({});
+      const { io, state } = await run({ saveWriterPrompts: true });
       expect(io.files.has("/work/.paseo/handoffs/old.md")).toBe(false);
       expect(io.files.has("/work/.paseo/handoffs/fresh.md")).toBe(true);
       expect(io.files.has("/work/.paseo/handoffs/continued.md")).toBe(true);
@@ -745,6 +749,12 @@ describe("BatonController", () => {
       await controller.dispose();
       const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
       expect(Object.keys(state)).toEqual(["old"]);
+    });
+
+    it("removes every saved writer prompt once saving them is turned off", async () => {
+      const { io } = await run({ saveWriterPrompts: false });
+      expect(io.files.has("/home/.paseo/plugin-data/baton/writer-prompts/old.md")).toBe(false);
+      expect(io.files.has("/home/.paseo/plugin-data/baton/writer-prompts/fresh.md")).toBe(false);
     });
 
     it("does nothing when cleanup is turned off", async () => {
@@ -1185,6 +1195,21 @@ describe("BatonController", () => {
       });
       expect(prompt).toContain("## Previous handoff");
       expect(prompt).toContain("The ORIGINAL GOAL of the earlier session");
+    });
+
+    it("does not follow a relative path or one that steps out of its folder", async () => {
+      for (const first of [
+        "Read handoffs/prev.md and continue the task.",
+        "Read /work/other/../.paseo/handoffs/prev.md and continue the task.",
+        "Read /work/.paseo/handoffs/../secret.md and continue the task.",
+      ]) {
+        const prompt = await writerPrompt(first, {
+          "/work/.paseo/handoffs/prev.md": "PREVIOUS BODY",
+          "/work/.paseo/secret.md": "SECRET BODY",
+        });
+        expect(prompt).not.toContain("PREVIOUS BODY");
+        expect(prompt).not.toContain("SECRET BODY");
+      }
     });
 
     it("does not read other files named in the conversation", async () => {

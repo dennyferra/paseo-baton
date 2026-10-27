@@ -360,7 +360,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         />
         <SettingsSwitch
           label="Save the writer's prompt"
-          hint="For checking what the writer was given. Keeps the latest prompt for each agent in Baton's data folder (~/.paseo/plugin-data/baton/writer-prompts). It contains your conversation text, so leave it off unless you are debugging."
+          hint="For checking what the writer was given. Keeps the latest prompt for each agent in Baton's data folder (~/.paseo/plugin-data/baton/writer-prompts). It contains your conversation text, so leave it off unless you are debugging. Turning it off removes the saved prompts."
           value={draft.saveWriterPrompts}
           onValueChange={(value) => update({ saveWriterPrompts: value })}
         />

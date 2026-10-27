@@ -75,7 +75,7 @@ export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40
     } else if (detail.type === "search" && detail.filePaths?.length) {
       target = ` ${detail.filePaths.slice(0, 3).join(", ")}`;
     } else if (detail.type === "fetch") {
-      target = ` ${detail.url}`;
+      target = ` ${detail.url.split(/[?#]/)[0]}`; // the query string can hold tokens
     } else if (detail.type === "plain_text" && detail.label) {
       target = ` ${detail.label}`;
     }

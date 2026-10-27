@@ -132,6 +132,8 @@ export const batonSettings = defineSettings({
 });
 
 export const BATON_WRITER_LABEL = "baton-writer";
+/** Paseo's label for a subagent's parent (PARENT_AGENT_ID_LABEL in @getpaseo/protocol), kept here so no runtime import is needed. */
+export const PARENT_AGENT_ID_LABEL = "paseo.parent-agent-id";
 export const BATON_WRITER_TITLE = "[Handoff writer]";
 
 export const batonRowSchema = z.object({

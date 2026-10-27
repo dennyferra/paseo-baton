@@ -36,7 +36,8 @@ For review:
   recent conversation text to the provider of the profile you choose.
 - Filesystem: writes handoff files to .paseo/handoffs in the workspace (or a user-chosen
   folder) and its own state file under ~/.paseo/plugin-data/baton (and, only if the user turns
-  on a debug setting, the latest writer prompt per agent in plugin-data/baton/writer-prompts). By default it deletes
+  on a debug setting, the latest writer prompt per agent in plugin-data/baton/writer-prompts,
+  which is removed with its handoff and when the setting is turned off). By default it deletes
   an unused handoff when the original session resumes, and deletes unused handoff files
   older than 3 days (on start and once a day). Both have settings to turn them off, and it
   only ever deletes <agentId>.md files it recorded itself. For a session started with Continue from

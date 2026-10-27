@@ -62,7 +62,8 @@ Settings live under Settings -> Plugins -> Baton. Changes are saved automaticall
   titles from git to what the writer sees. Turn it off to keep file names and commit messages out of it.
 - **Save the writer's prompt** (`saveWriterPrompts`, default off): keeps the latest prompt sent to the writer for
   each agent as `~/.paseo/plugin-data/baton/writer-prompts/<agentId>.md`, so you can check what it was given.
-  The file contains conversation text and stays on your machine until you delete it.
+  The file contains conversation text. It goes when its handoff does, and turning the setting off removes every
+  saved prompt.
 - **Storage location** (`handoffDirectory`, default empty): where handoff files are saved. Empty means
   `.paseo/handoffs` inside each workspace. A custom value can be an absolute path, `~/...`, or a path
   relative to the workspace. Files are named `<agentId>.md`. Existing handoffs keep their saved path.
@@ -118,4 +119,5 @@ skips expired ones, and re-appends chat rows for saved handoffs. A handoff is wr
 per idle period. Subagent tool calls are not handed off because they are provider child sessions
 rather than agents. Done entries are pruned when the agent is archived or after 7 days. Chat rows
 live in daemon memory and are restored after a daemon restart. Baton reads agent lifecycle events
-and writes handoff files and its own state file, and never logs secrets.
+and the conversation through Paseo, runs read-only `git` commands in the workspace, and writes handoff files
+and its own state file (and, only if you turn it on, the writer's prompt). It never logs secrets.

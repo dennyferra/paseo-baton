@@ -31,6 +31,10 @@ function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files:
     async exists(file) {
       return files.has(file);
     },
+    async list(dir) {
+      const prefix = `${dir}/`;
+      return [...files.keys()].filter((file) => file.startsWith(prefix) && !file.slice(prefix.length).includes("/")).map((file) => file.slice(prefix.length));
+    },
   };
 }
 

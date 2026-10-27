@@ -1,12 +1,11 @@
 import type { PaseoApi, PaseoAgent } from "@getpaseo/client";
-import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { PluginSettings } from "@getpaseo/plugin/server";
 import { execFile } from "node:child_process";
 import path, { dirname } from "node:path";
 import { promisify } from "node:util";
 import type { BatonEntry, BatonState, BatonSettings, HandoffInfo } from "../shared/baton";
-import { batonSettingsSchema, BATON_WRITER_LABEL, BATON_WRITER_TITLE } from "../shared/baton";
+import { batonSettingsSchema, BATON_WRITER_LABEL, BATON_WRITER_TITLE, PARENT_AGENT_ID_LABEL } from "../shared/baton";
 import {
   DAY_MS,
   DEFAULT_RETENTION_MS,
@@ -33,7 +32,7 @@ import {
   isHandoffDocument,
   stampHandoffDocument,
 } from "./handoff";
-import { handoffFileName, handoffPathFor, resolveStateFile, writerPromptFile } from "./paths";
+import { handoffFileName, handoffPathFor, resolveStateFile, writerPromptDir, writerPromptFile } from "./paths";
 import { gatherRepoFacts } from "./repo-facts";
 import { isMissing, loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { previousHandoffPath, renderMechanicalHandoff } from "./timeline-summary";
@@ -221,6 +220,7 @@ export class BatonController {
 
   private async sweepOldHandoffs(): Promise<number> {
     const settings = await this.readSettings();
+    if (!settings.saveWriterPrompts) await this.removeSavedWriterPrompts();
     if (!settings.cleanupOldHandoffs) return 0;
     const cutoff = this.now() - settings.cleanupAfterDays * DAY_MS;
     let removed = 0;
@@ -347,9 +347,11 @@ export class BatonController {
    */
   private async readPreviousHandoff(items: readonly AgentTimelineItem[]): Promise<string | undefined> {
     const file = previousHandoffPath(items);
-    if (!file) return undefined;
+    // An absolute, already-normalised path only, so `..` cannot step out of the folder it appears to name.
+    if (!file || !path.isAbsolute(file) || path.normalize(file) !== file) return undefined;
     const known = [...this.entries.values()].some((entry) => entry.path === file);
-    if (!known && path.basename(path.dirname(file)) !== "handoffs") return undefined;
+    const inHandoffsFolder = path.basename(path.dirname(file)) === "handoffs" && /^[\w.-]+\.md$/.test(path.basename(file));
+    if (!known && !inHandoffsFolder) return undefined;
     try {
       return await this.io.readFile(file);
     } catch {
@@ -848,6 +850,18 @@ export class BatonController {
     });
     this.writerAgentIds.add(writer.id);
     this.writerByAgentId.set(writer.id, entry.agentId);
+  }
+
+  /** Prompts saved while the setting was on hold conversation text, so turning it off removes them. */
+  private async removeSavedWriterPrompts(): Promise<void> {
+    try {
+      const dir = writerPromptDir(this.dataDir);
+      for (const name of await this.io.list(dir)) {
+        if (name.endsWith(".md")) await this.io.unlink(path.join(dir, name));
+      }
+    } catch (error: unknown) {
+      this.log(`Removing the saved writer prompts failed: ${String(error)}`);
+    }
   }
 
   /** The saved writer prompt holds conversation text, so it goes when its handoff does. */
