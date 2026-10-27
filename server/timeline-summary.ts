@@ -24,6 +24,12 @@ export function firstUserText(timeline: readonly AgentTimelineItem[]): string | 
   return null;
 }
 
+/** The handoff file a session was started from, when its first message is Baton's "Read <file> and continue the task." */
+export function previousHandoffPath(timeline: readonly AgentTimelineItem[]): string | null {
+  const match = /^Read\s+(\S+\.md)\s+and continue the task\.?\s*$/.exec(firstUserText(timeline)?.trim() ?? "");
+  return match ? match[1] : null;
+}
+
 export function lastAssistantText(timeline: readonly AgentTimelineItem[]): string | null {
   for (let i = timeline.length - 1; i >= 0; i--) {
     const item = timeline[i];
@@ -53,9 +59,14 @@ function isToolCall(item: AgentTimelineItem): item is ToolCallTimelineItem {
   return item.type === "tool_call";
 }
 
-/** The most recent tool calls, up to the limit. */
+/**
+ * What the agent did that left a trace: tool calls that name a file, URL or label, repeats folded into a count,
+ * the most recent ones up to the limit. A call only gets a status when it did not complete. Calls with nothing
+ * to name, such as shell commands, say nothing useful one by one, so they are counted in a closing line.
+ */
 export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40): string[] {
-  const out: string[] = [];
+  const named = new Map<string, number>();
+  const unnamed = new Map<string, number>();
   for (const item of timeline) {
     if (!isToolCall(item)) continue;
     const detail = item.detail;
@@ -69,9 +80,18 @@ export function toolSummaries(timeline: readonly AgentTimelineItem[], limit = 40
     } else if (detail.type === "plain_text" && detail.label) {
       target = ` ${detail.label}`;
     }
-    out.push(`- ${item.name}${target} (${item.status})`);
+    if (!target) {
+      unnamed.set(item.name, (unnamed.get(item.name) ?? 0) + 1);
+      continue;
+    }
+    const line = `- ${item.name}${target}${item.status === "completed" ? "" : ` (${item.status})`}`;
+    const count = named.get(line) ?? 0;
+    named.delete(line); // a repeat moves to the end, so the list stays in order of last use
+    named.set(line, count + 1);
   }
-  return out.slice(-limit);
+  const lines = [...named].map(([line, count]) => (count > 1 ? `${line} (x${count})` : line)).slice(-limit);
+  for (const [name, count] of unnamed) lines.push(`- ${count} ${name} call${count === 1 ? "" : "s"} (no details recorded)`);
+  return lines;
 }
 
 const MAX_FILES = 100;
@@ -121,6 +141,8 @@ export interface MechanicalHandoffInput {
   limits?: Omit<DraftLimits, "historyEntries">;
   /** True when the conversation was longer than what could be read, so the first request may be missing. */
   historyCut?: boolean;
+  /** The handoff this session was started from, since the first message only points to it. */
+  previousHandoff?: string;
 }
 
 export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
@@ -179,6 +201,9 @@ export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
     "Not available from the session snapshot.",
     "",
     ...(input.repoFacts ? ["## Repo state", "", input.repoFacts, ""] : []),
+    ...(input.previousHandoff
+      ? ["## Previous handoff", "", "This session was started from this handoff, so its details still apply.", "", cutMiddle(input.previousHandoff, limits.maxTextChars * 2), ""]
+      : []),
     "## Transcript",
     "",
     transcript,

@@ -39,7 +39,9 @@ For review:
   on a debug setting, the latest writer prompt per agent in plugin-data/baton/writer-prompts). By default it deletes
   an unused handoff when the original session resumes, and deletes unused handoff files
   older than 3 days (on start and once a day). Both have settings to turn them off, and it
-  only ever deletes <agentId>.md files it recorded itself. The only environment variable
+  only ever deletes <agentId>.md files it recorded itself. For a session started with Continue from
+  handoff it also reads the handoff named in that session's first message, but only a handoff it
+  recorded or a .md file inside a folder called handoffs. The only environment variable
   it reads is PASEO_HOME, to find the daemon home.
 - Execution: the OS opener (open / xdg-open / cmd start), run only when the user clicks
   "Open in default app" on a handoff Baton saved, and read-only git commands (branch --show-current,

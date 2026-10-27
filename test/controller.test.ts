@@ -1148,6 +1148,54 @@ describe("BatonController", () => {
     });
   });
 
+  describe("a session started from a handoff", () => {
+    async function writerPrompt(firstMessage: string, files: Record<string, string>) {
+      const io = memoryIo({
+        [STATE_FILE]: JSON.stringify({
+          "agent-a": {
+            agentId: "agent-a",
+            workspaceId: "wks-a",
+            cwd: "/work",
+            idleSince: NOW - 60_000,
+            fireAt: NOW,
+            deadline: NOW + 60_000,
+            updatedAt: NOW - 60_000,
+            status: "pending",
+          },
+        }),
+        ...files,
+      });
+      const controller = new BatonController({
+        dataDir: "/home/.paseo/plugin-data/baton",
+        settings: settings(),
+        log: () => {},
+        io,
+        now: () => NOW,
+      });
+      const stub = stubPaseo({ createId: "writer-1", history: { "agent-a": [{ type: "user_message", text: firstMessage }] } });
+      await controller.ensureRecovered(stub.paseo as never);
+      await waitFor(() => stub.created.length > 0);
+      await controller.dispose();
+      return String(stub.created[0].prompt);
+    }
+
+    it("puts the handoff it was started from into the draft, since the first message only points to it", async () => {
+      const prompt = await writerPrompt("Read /work/.paseo/handoffs/prev.md and continue the task.", {
+        "/work/.paseo/handoffs/prev.md": "Title: Earlier work\n\n# Task\nThe ORIGINAL GOAL of the earlier session\n",
+      });
+      expect(prompt).toContain("## Previous handoff");
+      expect(prompt).toContain("The ORIGINAL GOAL of the earlier session");
+    });
+
+    it("does not read other files named in the conversation", async () => {
+      const prompt = await writerPrompt("Read /etc/secret.md and continue the task.", {
+        "/etc/secret.md": "SECRET CONTENT",
+      });
+      expect(prompt).not.toContain("SECRET CONTENT");
+      expect(prompt).not.toContain("## Previous handoff");
+    });
+  });
+
   it("spawns a handoff writer from the configured profile (provider, model, effort; no mode) and finalizes from its turn", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({

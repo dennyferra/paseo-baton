@@ -36,7 +36,7 @@ import {
 import { handoffFileName, handoffPathFor, resolveStateFile, writerPromptFile } from "./paths";
 import { gatherRepoFacts } from "./repo-facts";
 import { isMissing, loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
-import { renderMechanicalHandoff } from "./timeline-summary";
+import { previousHandoffPath, renderMechanicalHandoff } from "./timeline-summary";
 
 type AgentStatus = NonNullable<PaseoAgent["status"]>;
 type RowData = {
@@ -340,6 +340,23 @@ export class BatonController {
     );
   }
 
+  /**
+   * A session started by "Continue from handoff" has only a pointer to the handoff as its first message, and the
+   * writer cannot read files, so the handoff's text goes into the draft. Only a handoff Baton knows or a file
+   * named like one in a handoffs folder is read, never a path taken from the conversation as is.
+   */
+  private async readPreviousHandoff(items: readonly AgentTimelineItem[]): Promise<string | undefined> {
+    const file = previousHandoffPath(items);
+    if (!file) return undefined;
+    const known = [...this.entries.values()].some((entry) => entry.path === file);
+    if (!known && path.basename(path.dirname(file)) !== "handoffs") return undefined;
+    try {
+      return await this.io.readFile(file);
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The machine draft: what Baton knows of the conversation, within the configured detail level. */
   private async buildDraft(entry: BatonEntry, handoffPath: string, paseo: PaseoApi, settings: BatonSettings): Promise<string> {
     await this.ensureTimeline(entry.agentId, paseo, settings);
@@ -354,6 +371,7 @@ export class BatonController {
       now: this.now(),
       limits: DETAIL_LIMITS[settings.conversationDetail],
       historyCut: conversation?.cut ?? false,
+      previousHandoff: await this.readPreviousHandoff(conversation?.items ?? []),
       repoFacts: settings.includeRepoState ? await gatherRepoFacts(cwd) : "",
     });
     this.log(`Handoff draft for ${entry.agentId} is ${draft.length} characters`);

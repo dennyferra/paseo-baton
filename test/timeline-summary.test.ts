@@ -4,6 +4,7 @@ import {
   cutMiddle,
   firstUserText,
   lastAssistantText,
+  previousHandoffPath,
   renderMechanicalHandoff,
   toolSummaries,
   touchedFilePaths,
@@ -220,5 +221,63 @@ describe("renderMechanicalHandoff limits", () => {
     expect(doc).toContain("(20 earlier files not shown)");
     expect(doc).toContain("- f-119.ts");
     expect(doc).not.toContain("- f-19.ts\n");
+  });
+});
+
+describe("toolSummaries noise", () => {
+  const call = (id: string, name: string, detail: unknown, status = "completed") => ({
+    type: "tool_call" as const,
+    callId: id,
+    name,
+    status: status as "completed",
+    error: null,
+    detail: detail as never,
+  });
+
+  it("folds repeats into a count, drops the status of completed calls and counts unnamed ones", () => {
+    const items = timeline([
+      call("1", "bash", { type: "shell", command: "pytest" }),
+      call("2", "read", { type: "read", filePath: "Dockerfile" }),
+      call("3", "bash", { type: "shell", command: "git push" }),
+      call("4", "read", { type: "read", filePath: "Dockerfile" }),
+      call("5", "write", { type: "write", filePath: "scripts/local_eval.py" }),
+      call("6", "bash", { type: "shell", command: "docker ps" }),
+    ]);
+    expect(toolSummaries(items)).toEqual([
+      "- read Dockerfile (x2)",
+      "- write scripts/local_eval.py",
+      "- 3 bash calls (no details recorded)",
+    ]);
+  });
+
+  it("keeps the status of a call that did not complete", () => {
+    const items = timeline([call("1", "write", { type: "write", filePath: "a.ts" }, "failed")]);
+    expect(toolSummaries(items)).toEqual(["- write a.ts (failed)"]);
+  });
+});
+
+describe("previousHandoffPath", () => {
+  it("finds the file in Baton's continue prompt and nothing else", () => {
+    const first = (text: string) => timeline([{ type: "user_message", text }]);
+    expect(previousHandoffPath(first("Read /work/.paseo/handoffs/abc.md and continue the task."))).toBe(
+      "/work/.paseo/handoffs/abc.md",
+    );
+    expect(previousHandoffPath(first("Please read /work/x.md and tell me about it"))).toBeNull();
+    expect(previousHandoffPath(first("Fix the login bug"))).toBeNull();
+    expect(previousHandoffPath(timeline([]))).toBeNull();
+  });
+
+  it("puts the previous handoff in the draft", () => {
+    const doc = renderMechanicalHandoff({
+      agentId: "a",
+      workspaceId: "w",
+      cwd: "/work",
+      provider: null,
+      now: 1_000,
+      timeline: [],
+      previousHandoff: "# Task\nThe original goal",
+    });
+    expect(doc).toContain("## Previous handoff");
+    expect(doc).toContain("The original goal");
   });
 });
