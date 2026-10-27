@@ -1,7 +1,7 @@
 import { useSettings, usePaseo, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { SettingsCard, SettingsInput, SettingsSwitch, useToast } from "@getpaseo/plugin/client/ui";
 import type { PaseoApi } from "@getpaseo/client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { BatonSettings } from "../shared/baton";
 import {
@@ -60,6 +60,9 @@ function describeProfile(profile: DaemonProfile, snapshot: ProviderSnapshot | nu
   return parts.join(" · ");
 }
 
+/** How long after the last change the settings are saved, so typing in a field saves once. */
+const AUTOSAVE_DELAY_MS = 800;
+
 function clampInt(value: string, fallback: number, max: number): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -75,6 +78,34 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
   const [workspaces, setWorkspaces] = useState<WorkspaceChoice[]>([]);
   const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** The draft that last failed to save; it is not retried until the user changes something. */
+  const [failedDraft, setFailedDraft] = useState<string | null>(null);
+  const latestSettings = useRef(settings);
+  latestSettings.current = settings;
+
+  const savedJson = settings.status === "ready" ? JSON.stringify(settings.values) : null;
+  const revision = settings.status === "ready" ? settings.revision : null;
+
+  // Changes are saved on their own shortly after the last edit.
+  useEffect(() => {
+    if (draft === null || savedJson === null || settings.saving) return;
+    const draftJson = JSON.stringify(draft);
+    if (draftJson === savedJson || draftJson === failedDraft) return;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const current = latestSettings.current;
+        if (current.status !== "ready") return;
+        if (await current.save(draft, current.revision)) {
+          setFailedDraft(null);
+          await current.reload();
+        } else {
+          setFailedDraft(draftJson);
+          toast.error("Could not save Baton settings");
+        }
+      })();
+    }, AUTOSAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [draft, savedJson, revision, settings.saving, failedDraft]);
 
   useEffect(() => {
     if (draft !== null) return;
@@ -173,31 +204,13 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         flex: 1,
         fontSize: layout.compact ? 13 : 14,
       },
-      saveBarButton: {
-        paddingVertical: 8,
-        paddingHorizontal: 16,
-        borderRadius: 8,
-        backgroundColor: theme.colors.accent,
-      },
-      save: {
-        marginTop: layout.compact ? 8 : 12,
-        padding: 12,
-        borderRadius: 8,
-        backgroundColor: theme.colors.accent,
-        alignItems: "center" as const,
-        opacity: settings.saving ? 0.6 : 1,
-      },
-      saveText: {
-        color: theme.colors.accentForeground,
-        fontWeight: "600" as const,
-      },
       error: {
         color: theme.colors.statusDanger,
         fontSize: layout.compact ? 12 : 13,
         marginTop: 8,
       },
     }),
-    [theme, layout.compact, settings.saving],
+    [theme, layout.compact],
   );
 
   const projects = useMemo(() => {
@@ -252,36 +265,19 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
     update({ ignoredWorkspaceIds: ignored ? [...rest, id] : rest });
   };
 
-  const onSave = async () => {
-    if (settings.status !== "ready") return;
-    const ok = await settings.save(draft, settings.revision);
-    if (ok) {
-      await settings.reload();
-      toast.show("Baton settings saved", { variant: "success" });
-    } else {
-      toast.error("Could not save Baton settings");
-    }
-  };
-
-  const dirty = settings.status === "ready" && JSON.stringify(draft) !== JSON.stringify(settings.values);
+  const dirty = savedJson !== null && JSON.stringify(draft) !== savedJson;
+  const failed = dirty && JSON.stringify(draft) === failedDraft;
+  const saveStatus = failed ? "Could not save. Change a setting to try again." : dirty || settings.saving ? "Saving..." : "All changes saved";
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 24 }} stickyHeaderIndices={[0]}>
       <View style={styles.saveBar}>
         <Text
-          style={[styles.saveBarStatus, { color: dirty ? theme.colors.statusWarning : theme.colors.foregroundMuted }]}
+          accessibilityLiveRegion="polite"
+          style={[styles.saveBarStatus, { color: failed ? theme.colors.statusDanger : theme.colors.foregroundMuted }]}
         >
-          {dirty ? "You have unsaved changes" : "All changes saved"}
+          {saveStatus}
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Save baton settings"
-          onPress={() => void onSave()}
-          disabled={settings.saving || !dirty}
-          style={[styles.saveBarButton, { opacity: settings.saving || !dirty ? 0.5 : 1 }]}
-        >
-          <Text style={styles.saveText}>{settings.saving ? "Saving..." : "Save"}</Text>
-        </Pressable>
       </View>
       <Text style={styles.sectionTitle}>When to write a handoff</Text>
       <SettingsCard>
@@ -426,15 +422,6 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       {loadError ? <Text style={styles.error}>Could not load profiles or workspaces: {loadError}</Text> : null}
       {settings.status === "invalid" ? <Text style={styles.error}>{settings.error}</Text> : null}
       {settings.saveError ? <Text style={styles.error}>{settings.saveError}</Text> : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Save baton settings"
-        onPress={() => void onSave()}
-        style={styles.save}
-        disabled={settings.saving}
-      >
-        <Text style={styles.saveText}>{settings.saving ? "Saving..." : "Save"}</Text>
-      </Pressable>
     </ScrollView>
   );
 }

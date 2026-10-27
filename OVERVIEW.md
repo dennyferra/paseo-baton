@@ -40,7 +40,7 @@ in the plugin settings.
 
 ## Settings
 
-Settings live under Settings -> Plugins -> Baton.
+Settings live under Settings -> Plugins -> Baton. Changes are saved automatically a moment after you make them, and the bar at the top shows when that is done.
 
 - **Idle delay** (`idleDelayMinutes`, default 15, 1-240): how long an agent sits idle before a
   handoff is written. It does not depend on any provider's prompt cache. The countdown starts when the
