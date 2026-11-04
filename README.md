@@ -150,6 +150,10 @@ Server code must not import client code, and the reverse.
   link then reports the handoff can no longer be opened.
 - The Baton chip's state refreshes when an agent's status changes, so a menu left open can be stale
   after you change settings.
+- If Paseo restarts while a handoff is being written, that handoff can be cut off. With "Resume agents
+  after restart" on, Paseo may also resume agents that were running at the restart. In our one test
+  the interrupted writer was closed and not resumed, and no handoff was confirmed. Turn that Paseo
+  setting off while you rely on Baton, or check for a missing handoff after a restart.
 
 ## License
 
