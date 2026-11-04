@@ -48,6 +48,7 @@ function settings(overrides: Partial<BatonSettings> = {}) {
     conversationDetail: "standard",
     includeRepoState: true,
     handoffDirectory: "",
+    agentReadTools: false,
     deleteStaleHandoffs: true,
     waitForSubagents: true,
     cleanupOldHandoffs: true,

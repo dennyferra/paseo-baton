@@ -81,6 +81,7 @@ export const batonSettingsSchema = z.object({
   conversationDetail: z.enum(DETAIL_LEVELS).default("standard"),
   includeRepoState: z.boolean().default(true),
   handoffDirectory: z.string().trim().max(500).default(""),
+  agentReadTools: z.boolean().default(false),
   deleteStaleHandoffs: z.boolean().default(true),
   waitForSubagents: z.boolean().default(true),
   cleanupOldHandoffs: z.boolean().default(true),

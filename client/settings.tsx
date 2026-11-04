@@ -369,6 +369,12 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
           onChangeText={(value) => update({ handoffDirectory: value })}
         />
         <SettingsSwitch
+          label="Let agents read handoffs"
+          hint="Give new interactive agents two read-only tools: list the handoff files in their workspace and read one. Only agents started after you turn this on get them."
+          value={draft.agentReadTools}
+          onValueChange={(value) => update({ agentReadTools: value })}
+        />
+        <SettingsSwitch
           label="Delete unused handoffs when a session resumes"
           hint="If you keep working in the original session and nobody continued the handoff, delete its file. Turn off to keep every file."
           value={draft.deleteStaleHandoffs}

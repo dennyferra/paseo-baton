@@ -49,6 +49,10 @@ Its menu once a handoff exists, with turning handoffs off disabled:
 - **Automatic cleanup.** Once a day, and when Baton starts, it deletes handoff files that nobody
   continued after three days. Handoffs you continued are kept. A setting turns this off or changes
   the number of days. On the first start after updating, handoffs already older than that are deleted.
+- **Agent read tools (off by default).** Turn on "Let agents read handoffs" to give new interactive
+  agents two read-only tools: `baton_list_handoffs` lists the handoffs in their workspace, and
+  `baton_read_handoff` reads one by file name. Agents started before you turn it on don't get them.
+  Writers never do.
 - **Subagent wait.** If an agent's subagents are still working when the idle timer ends, Baton
   restarts the countdown instead of writing the handoff. A setting turns this off. The countdown
   starts when the agent's own turn ends, since Paseo marks a parent idle regardless of its
