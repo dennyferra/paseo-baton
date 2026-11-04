@@ -61,7 +61,7 @@ Its menu once a handoff exists, with turning handoffs off disabled:
 
 ## Install
 
-Requires Paseo 0.13.0 or newer. No accounts, tokens, or external tools.
+Requires Paseo 0.15.0 or newer. No accounts, tokens, or external tools.
 
 ```sh
 # from a local checkout

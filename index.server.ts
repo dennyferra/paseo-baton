@@ -12,21 +12,21 @@ export default function contribute(server: PluginServerContext) {
     log: (message) => console.log(`[baton] ${message}`),
   });
 
-  server.on("agent.turn_started", (event) => {
+  server.addHook("agent.turn.before", async (event) => {
     controller.onTurnStarted(event.agent);
   });
 
-  server.on("agent.turn_ended", (event, context) => {
+  server.addHook("agent.turn.after", async (event, context) => {
     void controller
       .onTurnEnded(event.agent, event.timeline, context.paseo)
-      .catch((error: unknown) => console.error(`[baton] turn_ended failed: ${String(error)}`));
+      .catch((error: unknown) => console.error(`[baton] turn.after failed: ${String(error)}`));
   });
 
-  server.on("agent.closed", (event) => {
+  server.addHook("agent.close.after", async (event) => {
     controller.onClosed(event.agent);
   });
 
-  server.on("agent.archived", (event) => {
+  server.addHook("agent.archive.after", async (event) => {
     controller.onArchived(event.agent);
   });
 

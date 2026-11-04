@@ -37,7 +37,7 @@ deletes the stale handoff file by default; a setting turns this off. A handoff t
 
 ## Setup
 
-Requires Paseo 0.13.0 or newer. No accounts, tokens, or external tools. Settings are configurable
+Requires Paseo 0.15.0 or newer. No accounts, tokens, or external tools. Settings are configurable
 in the plugin settings.
 
 ## Settings
