@@ -420,6 +420,13 @@ export class BatonController {
   }
 
   onClosed(agent: { id: string }): void {
+    // Paseo closes an idle agent's runtime to save resources, and the agent can still be continued.
+    // A finished handoff stays so Continue keeps working. Anything else is cleaned up as before.
+    if (this.entries.get(agent.id)?.status === "done") {
+      this.clearTimer(agent.id);
+      this.clearFallbackTimer(agent.id);
+      return;
+    }
     this.cleanupAgent(agent.id);
   }
 

@@ -537,6 +537,28 @@ describe("BatonController", () => {
     expect(state["agent-a"].continuedAgentId).toBe("agent-continued");
   });
 
+  it("keeps a finished handoff when Paseo closes the agent's idle runtime, so Continue still works", async () => {
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\n\nFix the bug.\n",
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+    });
+    const { paseo, created } = stubPaseo();
+    await controller.wake(paseo as never, ["wks-a"]);
+    controller.onClosed({ id: "agent-a" });
+    const { handoffs } = await controller.wake(paseo as never, ["wks-a"]);
+    expect(handoffs.map((handoff) => handoff.agentId)).toEqual(["agent-a"]);
+    await controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never);
+    expect(created).toHaveLength(1);
+    await controller.dispose();
+  });
+
   it("shows the continued title on the row and keeps it when the row is re-appended", async () => {
     const io = memoryIo({
       [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
