@@ -522,10 +522,9 @@ export class BatonController {
   async readHandoff(pathToRead: string, paseo: PaseoApi): Promise<{ content: string }> {
     this.setPaseo(paseo);
     await this.ensureRecovered(paseo);
-    const entry = [...this.entries.values()].find(
-      (candidate) => candidate.status === "done" && candidate.path === pathToRead,
-    );
-    if (!entry) throw new Error("This handoff can no longer be opened here because the session was continued after it was saved. The file may still be on disk.");
+    if (!(await this.canOpenHandoff(pathToRead, paseo))) {
+      throw new Error("Baton no longer tracks this handoff, so it can't be opened here. The file may still be on disk at its path.");
+    }
     try {
       return { content: await this.io.readFile(pathToRead) };
     } catch {
@@ -551,13 +550,28 @@ export class BatonController {
     return ignored;
   }
 
+  /**
+   * A handoff Baton tracks as done, or the agent's own handoff file when its entry was dropped, for
+   * example when the agent's runtime was closed before the fix. Anything else stays unreadable.
+   */
+  private async canOpenHandoff(filePath: string, paseo: PaseoApi): Promise<boolean> {
+    const tracked = [...this.entries.values()].some(
+      (candidate) => candidate.status === "done" && candidate.path === filePath,
+    );
+    if (tracked) return true;
+    const agentId = path.basename(filePath, ".md");
+    if (path.basename(filePath) !== handoffFileName(agentId)) return false;
+    const snapshot = await paseo.agents.ref(agentId).refresh().catch(() => null);
+    const cwd = snapshot?.agent.cwd;
+    if (!cwd) return false;
+    const custom = (await this.readSettings()).handoffDirectory;
+    return path.resolve(filePath) === path.resolve(handoffPathFor(cwd, agentId, custom));
+  }
+
   async openHandoff(pathToOpen: string, paseo: PaseoApi): Promise<{ opened: boolean }> {
     this.setPaseo(paseo);
     await this.ensureRecovered(paseo);
-    const entry = [...this.entries.values()].find(
-      (candidate) => candidate.status === "done" && candidate.path === pathToOpen,
-    );
-    if (!entry) throw new Error("Unknown handoff path.");
+    if (!(await this.canOpenHandoff(pathToOpen, paseo))) throw new Error("Unknown handoff path.");
     let exists = false;
     try {
       exists = await this.io.exists(pathToOpen);

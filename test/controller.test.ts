@@ -435,7 +435,7 @@ describe("BatonController", () => {
     const controller = makeController(io);
     const { paseo } = stubPaseo();
     expect(await controller.readHandoff(HANDOFF_PATH, paseo as never)).toEqual({ content: "# Task\n\nReview me" });
-    await expect(controller.readHandoff("/etc/passwd", paseo as never)).rejects.toThrow("can no longer be opened");
+    await expect(controller.readHandoff("/etc/passwd", paseo as never)).rejects.toThrow("no longer tracks");
     await controller.dispose();
   });
 
@@ -616,6 +616,36 @@ describe("BatonController", () => {
     await expect(controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never)).rejects.toThrow(
       "No handoff is ready",
     );
+    await controller.dispose();
+  });
+
+  it("opens an agent's own handoff file after its entry was dropped, but nothing else", async () => {
+    const opened: string[] = [];
+    const io = memoryIo({ [HANDOFF_PATH]: "# Task\n\nFix the bug." });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+      openFile: async (filePath) => {
+        opened.push(filePath);
+      },
+    });
+    const paseo = {
+      agents: {
+        ref: (agentId: string) => ({
+          refresh: async () => (agentId === "agent-a" ? { agent: { cwd: "/work" } } : null),
+        }),
+      },
+    };
+    expect(await controller.readHandoff(HANDOFF_PATH, paseo as never)).toEqual({ content: "# Task\n\nFix the bug." });
+    expect(await controller.openHandoff(HANDOFF_PATH, paseo as never)).toEqual({ opened: true });
+    expect(opened).toEqual([HANDOFF_PATH]);
+    await expect(controller.openHandoff("/work/.paseo/handoffs/other.md", paseo as never)).rejects.toThrow("Unknown handoff path");
+    await expect(controller.openHandoff("/etc/passwd", paseo as never)).rejects.toThrow("Unknown handoff path");
+    await expect(controller.readHandoff("/etc/passwd", paseo as never)).rejects.toThrow("no longer tracks");
+    expect(opened).toEqual([HANDOFF_PATH]);
     await controller.dispose();
   });
 
