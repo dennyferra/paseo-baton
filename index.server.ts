@@ -2,7 +2,7 @@ import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { attachBatonTools } from "./server/agent-tools";
 import { BatonController } from "./server/controller";
 import { resolveDaemonHome, resolveDataDir } from "./server/paths";
-import { batonSettings, archiveAgentRpc, continueHandoffRpc, createNowRpc, DEFAULT_SETTINGS, openHandoffRpc, readHandoffRpc, setEnabledRpc, wakeRpc } from "./shared/baton";
+import { batonSettings, archiveAgentRpc, continueHandoffRpc, createNowRpc, openHandoffRpc, readHandoffRpc, setEnabledRpc, wakeRpc } from "./shared/baton";
 
 export default function contribute(server: PluginServerContext) {
   const dataDir = resolveDataDir(resolveDaemonHome());
@@ -13,17 +13,9 @@ export default function contribute(server: PluginServerContext) {
     log: (message) => console.log(`[baton] ${message}`),
   });
 
-  const readSettings = async () => {
-    try {
-      const state = await settings.read();
-      if (state.status === "ready") return state.values;
-    } catch (error: unknown) {
-      console.error(`[baton] reading settings failed: ${String(error)}`);
-    }
-    return DEFAULT_SETTINGS;
-  };
-
-  server.addHook("agent.open.before", async ({ request }) => attachBatonTools(request, readSettings));
+  server.addHook("agent.open.before", async ({ request }) =>
+    attachBatonTools(request, () => controller.readSettings()),
+  );
 
   server.addHook("agent.turn.before", async (event) => {
     controller.onTurnStarted(event.agent);

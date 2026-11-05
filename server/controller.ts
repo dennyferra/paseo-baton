@@ -32,7 +32,7 @@ import {
   isHandoffDocument,
   stampHandoffDocument,
 } from "./handoff";
-import { handoffFileName, handoffPathFor, resolveStateFile } from "./paths";
+import { handoffFileName, handoffPathFor, isAgentHandoffPath, resolveStateFile } from "./paths";
 import { gatherRepoFacts } from "./repo-facts";
 import { isMissing, loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { previousHandoffPath, renderMechanicalHandoff } from "./timeline-summary";
@@ -526,7 +526,7 @@ export class BatonController {
       throw new Error("Baton no longer tracks this handoff, so it can't be opened here. The file may still be on disk at its path.");
     }
     try {
-      return { content: await this.io.readFile(pathToRead) };
+      return { content: await this.io.readFile(path.resolve(pathToRead)) };
     } catch {
       throw new Error("The handoff file is missing.");
     }
@@ -555,31 +555,36 @@ export class BatonController {
    * example when the agent's runtime was closed before the fix. Anything else stays unreadable.
    */
   private async canOpenHandoff(filePath: string, paseo: PaseoApi): Promise<boolean> {
+    const resolved = path.resolve(filePath);
     const tracked = [...this.entries.values()].some(
-      (candidate) => candidate.status === "done" && candidate.path === filePath,
+      (candidate) => candidate.status === "done" && candidate.path !== undefined && path.resolve(candidate.path) === resolved,
     );
     if (tracked) return true;
+    // Untracked files are only ever an agent's own file, so the agent must still exist to say where that is.
     const agentId = path.basename(filePath, ".md");
-    if (path.basename(filePath) !== handoffFileName(agentId)) return false;
+    const workspaceDir = await this.agentWorkspaceDir(paseo, agentId);
+    if (!workspaceDir) return false;
+    return isAgentHandoffPath(filePath, agentId, workspaceDir, (await this.readSettings()).handoffDirectory);
+  }
+
+  private async agentWorkspaceDir(paseo: PaseoApi, agentId: string): Promise<string | null> {
     const snapshot = await paseo.agents.ref(agentId).refresh().catch(() => null);
-    const cwd = snapshot?.agent.cwd;
-    if (!cwd) return false;
-    const custom = (await this.readSettings()).handoffDirectory;
-    return path.resolve(filePath) === path.resolve(handoffPathFor(cwd, agentId, custom));
+    return snapshot?.agent.cwd ?? null;
   }
 
   async openHandoff(pathToOpen: string, paseo: PaseoApi): Promise<{ opened: boolean }> {
     this.setPaseo(paseo);
     await this.ensureRecovered(paseo);
     if (!(await this.canOpenHandoff(pathToOpen, paseo))) throw new Error("Unknown handoff path.");
+    const target = path.resolve(pathToOpen);
     let exists = false;
     try {
-      exists = await this.io.exists(pathToOpen);
+      exists = await this.io.exists(target);
     } catch (error: unknown) {
       this.log(`Checking handoff file failed: ${String(error)}`);
     }
     if (!exists) throw new Error("The handoff file is missing.");
-    await this.openFile(pathToOpen);
+    await this.openFile(target);
     return { opened: true };
   }
 
@@ -713,7 +718,8 @@ export class BatonController {
     }
   }
 
-  private async readSettings(): Promise<BatonSettings> {
+  /** The current Baton settings, or the defaults when they cannot be read. */
+  async readSettings(): Promise<BatonSettings> {
     try {
       const state = await this.settings.read();
       if (state.status === "ready") return state.values;

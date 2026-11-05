@@ -649,6 +649,28 @@ describe("BatonController", () => {
     await controller.dispose();
   });
 
+  it("matches a tracked handoff path however it is spelled", async () => {
+    const opened: string[] = [];
+    const io = memoryIo({
+      [STATE_FILE]: JSON.stringify({ "agent-a": doneEntry() }),
+      [HANDOFF_PATH]: "# Task\n\nFix the bug.",
+    });
+    const controller = new BatonController({
+      dataDir: "/home/.paseo/plugin-data/baton",
+      settings: settings(),
+      log: () => {},
+      io,
+      now: () => NOW,
+      openFile: async (filePath) => {
+        opened.push(filePath);
+      },
+    });
+    const { paseo } = stubPaseo();
+    await controller.openHandoff("/work/.paseo/handoffs/./agent-a.md", paseo as never);
+    expect(opened).toEqual([HANDOFF_PATH]);
+    await controller.dispose();
+  });
+
   it("opens only a known done handoff path", async () => {
     const opened: string[] = [];
     const io = memoryIo({

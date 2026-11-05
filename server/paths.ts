@@ -34,3 +34,18 @@ export function handoffDirFor(workspaceDir: string, customDir = ""): string {
 export function handoffPathFor(workspaceDir: string, agentId: string, customDir = ""): string {
   return path.join(handoffDirFor(workspaceDir, customDir), handoffFileName(agentId));
 }
+
+/** A markdown file name that can name a handoff: not hidden, and with no directory part. */
+export function isHandoffFileName(name: string): boolean {
+  return name === path.basename(name) && name.endsWith(".md") && !name.startsWith(".");
+}
+
+/** The path of a handoff file name inside a handoff directory, or null when the name is not one. */
+export function handoffPathForName(dir: string, name: string): string | null {
+  return isHandoffFileName(name) ? path.join(dir, name) : null;
+}
+
+/** True when `filePath` is exactly the agent's own handoff file for that workspace and storage setting. */
+export function isAgentHandoffPath(filePath: string, agentId: string, workspaceDir: string, customDir = ""): boolean {
+  return path.resolve(filePath) === path.resolve(handoffPathFor(workspaceDir, agentId, customDir));
+}

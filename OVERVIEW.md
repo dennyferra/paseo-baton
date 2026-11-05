@@ -83,6 +83,9 @@ Settings live under Settings -> Plugins -> Baton. Changes are saved automaticall
 - **Ignore new projects by default** (`ignoreNewProjects`, default off): projects are active unless
   you ignore them. Turn this on to ignore projects that appear later until you switch them on.
   Projects that exist when you turn it on keep their current setting.
+- **Let agents read handoffs** (`agentReadTools`, default off): gives new interactive agents two read-only
+  tools, one to list the handoff files in their workspace and one to read a file by name. Agents that were
+  already running when you turn it on don't get them. Handoff writers never do.
 
 ## Data
 
@@ -100,7 +103,9 @@ Baton builds from the agent's conversation, which it reads back from Paseo when 
   (`branch --show-current`, `status --short`, `log -n 8`) in the workspace, with `core.fsmonitor` off and no
   optional locks so the repository's own configuration cannot run anything;
 - when the session was started with Continue from handoff, the text of the handoff it came from. Baton reads
-  only a handoff it recorded or a `.md` file in a folder called `handoffs`, by an absolute path.
+  only a handoff it recorded, or the agent's own handoff file, by an absolute path. With **Let agents read
+  handoffs** on, the agents' tools can also list and read the `.md` files in the handoff folder of their own
+  workspace.
 
 Tool output is not included. The writer runs on the provider and model of the profile you pick, or on the idle
 agent's own provider and model by default, so that provider sees this text. The writer subagent keeps the prompt

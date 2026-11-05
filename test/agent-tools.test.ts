@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { attachBatonTools, batonAgentTools, listHandoffFiles, resolveHandoffFile } from "../server/agent-tools";
+import { attachBatonTools, batonAgentTools, listHandoffFiles } from "../server/agent-tools";
+import { handoffPathForName } from "../server/paths";
 import { BATON_WRITER_LABEL } from "../shared/baton";
 
 let cwd: string;
@@ -33,14 +34,14 @@ function toolNamed(name: string, readSettings = readOn) {
 
 const contextFor = (dir: string) => ({ agent: { id: "agent-a", workspaceId: "ws", cwd: dir } }) as never;
 
-describe("resolveHandoffFile", () => {
+describe("handoffPathForName", () => {
   it("accepts a plain markdown file name inside the handoff directory", () => {
-    expect(resolveHandoffFile(handoffDir, "agent-a.md")).toBe(path.join(handoffDir, "agent-a.md"));
+    expect(handoffPathForName(handoffDir, "agent-a.md")).toBe(path.join(handoffDir, "agent-a.md"));
   });
 
   it("rejects paths, traversal, hidden files and non-markdown names", () => {
     for (const file of ["../secret.md", "sub/agent.md", "/etc/passwd", "..", "agent.txt", ".hidden.md", ""]) {
-      expect(resolveHandoffFile(handoffDir, file), file).toBeNull();
+      expect(handoffPathForName(handoffDir, file), file).toBeNull();
     }
   });
 });
@@ -58,6 +59,14 @@ describe("listHandoffFiles", () => {
     await writeHandoff("new.md", "# Task\nnew");
     const files = await listHandoffFiles(handoffDir);
     expect(files.map((file) => file.name)).toEqual(["new.md", "old.md"]);
+  });
+
+  it("leaves out a file that disappears while the folder is being listed", async () => {
+    await writeHandoff("kept.md", "# Task\nkept");
+    // A dangling link is listed by readdir but cannot be stat'ed, like a file removed mid-listing.
+    await symlink(path.join(cwd, "missing-target"), path.join(handoffDir, "gone.md"));
+    const files = await listHandoffFiles(handoffDir);
+    expect(files.map((file) => file.name)).toEqual(["kept.md"]);
   });
 });
 

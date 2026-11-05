@@ -134,11 +134,11 @@ npm test
 
 Layout:
 
-- `server/` - controller, state store, handoff prompt, timeline summary and repo state (daemon side)
+- `server/` - controller, state store, handoff prompt, timeline summary, repo state and the agent read tools (daemon side)
 - `client/` - Baton chip, chat row, handoff viewer and settings screen (app side)
 - `shared/` - Zod contracts, RPCs and settings shared by both sides; no runtime code from either side
 - `docs/` - maintainer notes, such as the registry submission text (not shipped in the package)
-- `test/` - Vitest tests for the controller, core state machine, store and summaries
+- `test/` - Vitest tests for the controller, core state machine, store, summaries and agent read tools
 
 Server code must not import client code, and the reverse.
 
