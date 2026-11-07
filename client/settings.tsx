@@ -37,13 +37,13 @@ const SAME_AS_RUNNING = "";
 const DETAIL_INFO: Record<DetailLevel, { name: string; note: string }> = {
   compact: { name: "Compact", note: "Cheapest, least detail." },
   standard: { name: "Standard", note: "A good balance." },
-  full: { name: "Full", note: "Most detail, higher writer cost." },
+  full: { name: "Full", note: "Most detail, costs more." },
 };
 
-// e.g. "Up to about 60k characters of conversation, 2000 history entries. A good balance."
+// e.g. "Up to about 60k characters. A good balance."
 function describeDetail(level: DetailLevel): string {
   const limits = DETAIL_LIMITS[level];
-  return `Up to about ${Math.round(limits.maxChars / 1000)}k characters of conversation, ${limits.historyEntries} history entries. ${DETAIL_INFO[level].note}`;
+  return `Up to about ${Math.round(limits.maxChars / 1000)}k characters. ${DETAIL_INFO[level].note}`;
 }
 
 type ProviderSnapshot = Awaited<ReturnType<PaseoApi["providers"]["snapshot"]>>;
@@ -254,7 +254,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
   };
 
   const profileOptions: ProfileChoice[] = [
-    { value: SAME_AS_RUNNING, name: "Same as running agent", detail: "The idle agent's own provider, model and effort" },
+    { value: SAME_AS_RUNNING, name: "Same as running agent", detail: "The agent's own provider, model and effort" },
     ...profiles,
   ];
   // Keep a saved profile visible while the list loads or if the profile was deleted.
@@ -307,13 +307,13 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         />
         <SettingsSwitch
           label="Wait for subagents to finish"
-          hint="Restart the countdown while subagents the agent started are still working, up to 4 hours. Subagents that run inside the provider, such as Claude's Task tool, are not visible to Baton and are not waited for."
+          hint="Wait for subagents Baton can see to finish, up to 4 hours."
           value={draft.waitForSubagents}
           onValueChange={(value) => update({ waitForSubagents: value })}
         />
         <SettingsInput
           label="Context threshold (%)"
-          hint={`Offer a handoff once an idle agent's context reaches this share of its maximum (${MIN_CONTEXT_THRESHOLD_PERCENT}-${MAX_CONTEXT_THRESHOLD_PERCENT}). The Baton menu can override it per agent.`}
+          hint={`Offer a handoff when a turn ends and the context is this full (${MIN_CONTEXT_THRESHOLD_PERCENT}-${MAX_CONTEXT_THRESHOLD_PERCENT}). The Baton menu can change it per agent.`}
           initialValue={String(draft.contextThresholdPercent)}
           onChangeText={(value) =>
             update({
@@ -328,7 +328,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         />
         <SettingsInput
           label="Fallback context size (tokens)"
-          hint="The maximum used for agents that report none. The threshold applies to this many tokens there, and per-agent overrides do not."
+          hint="Size used for agents that don't report a maximum. The threshold applies to it, and per-agent overrides don't."
           initialValue={String(draft.contextFallbackTokens)}
           onChangeText={(value) =>
             update({
@@ -365,7 +365,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         })}
         <Text style={styles.subTitle}>Conversation detail</Text>
         <Text style={[styles.hint, { marginBottom: 8 }]}>
-          How much of the conversation the writer sees. Long messages keep their start and end.
+          How much of the conversation the writer reads.
         </Text>
         {DETAIL_LEVELS.map((level) => {
           const selected = draft.conversationDetail === level;
@@ -385,7 +385,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         })}
         <SettingsSwitch
           label="Include repo state"
-          hint="Add the branch, changed files and recent commit titles from git to the writer's prompt. Turn off to keep file names and commit messages out."
+          hint="Add the branch, changed files and recent commit titles from git."
           value={draft.includeRepoState}
           onValueChange={(value) => update({ includeRepoState: value })}
         />
@@ -394,26 +394,26 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       <SettingsCard>
         <SettingsInput
           label="Storage location"
-          hint="Where handoff files are saved. Leave empty for the default, .paseo/handoffs inside each workspace. Use an absolute path, ~/..., or a path relative to the workspace. Handoffs contain excerpts of your conversations, so add this folder to .gitignore if it is inside a git repository."
+          hint="Empty uses .paseo/handoffs in each workspace. Handoffs contain conversation excerpts, so gitignore this folder if it's inside a repo."
           placeholder=".paseo/handoffs"
           initialValue={draft.handoffDirectory}
           onChangeText={(value) => update({ handoffDirectory: value })}
         />
         <SettingsSwitch
           label="Let agents read handoffs"
-          hint="Give new interactive agents two read-only tools: list the handoff files in their workspace and read one. Only agents started after you turn this on get them."
+          hint="New interactive agents can list and read handoffs in their workspace. Existing agents don't get this."
           value={draft.agentReadTools}
           onValueChange={(value) => update({ agentReadTools: value })}
         />
         <SettingsSwitch
           label="Delete unused handoffs when a session resumes"
-          hint="If you keep working in the original session and nobody continued the handoff, delete its file. Turn off to keep every file."
+          hint="Delete a handoff when you keep working in its session and nobody continued it."
           value={draft.deleteStaleHandoffs}
           onValueChange={(value) => update({ deleteStaleHandoffs: value })}
         />
         <SettingsSwitch
           label="Clean up old handoffs automatically"
-          hint="Once a day, and when Baton starts, delete handoff files that nobody continued after the number of days below. Handoffs you continued are kept."
+          hint="Daily and at startup, delete unused handoffs older than the days below. Continued handoffs are kept."
           value={draft.cleanupOldHandoffs}
           onValueChange={(value) => update({ cleanupOldHandoffs: value })}
         />
@@ -428,12 +428,12 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       </SettingsCard>
       <Text style={styles.sectionTitle}>Ignored projects and workspaces</Text>
       <Text style={[styles.hint, { marginBottom: 8 }]}>
-        Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers all its workspaces, including new ones.
+        Agents in ignored projects or workspaces never write handoffs. Ignoring a project also covers its new workspaces.
       </Text>
       <SettingsCard>
         <SettingsSwitch
           label="Ignore new projects by default"
-          hint="Turn on to ignore projects that appear from now on until you switch them on below. Projects listed below keep their current setting."
+          hint="Ignore projects that appear from now on. Projects below keep their setting."
           value={draft.ignoreNewProjects}
           disabled={!workspacesLoaded}
           onValueChange={setIgnoreNewProjects}
