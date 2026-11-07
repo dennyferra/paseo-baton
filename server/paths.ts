@@ -14,6 +14,10 @@ export function resolveStateFile(dataDir: string): string {
   return path.join(dataDir, "baton-state.json");
 }
 
+export function resolveContextStateFile(dataDir: string): string {
+  return path.join(dataDir, "baton-context-state.json");
+}
+
 export function handoffFileName(agentId: string): string {
   return `${agentId}.md`;
 }

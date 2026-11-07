@@ -36,13 +36,23 @@ Its menu once a handoff exists, with turning handoffs off disabled:
   saved.
 - **Review in the app.** Clicking the saved path opens the handoff rendered as markdown, with a
   button to open the file in your default app.
-- **Baton chip.** Every agent gets a **Baton** chip in the composer with a menu:
-  - **Continue from handoff** starts a new agent titled `[Handoff] <task>` in the same workspace
-    and opens it.
-  - **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
-    available only for an idle session with no handoff yet and with handoffs turned on.
-  - **Turn off / Turn on handoff for this session** pauses Baton for one agent. It is saved across
-    restarts and disabled once a handoff exists. In an ignored workspace or project the menu says so.
+  - **Baton chip.** Every agent gets a **Baton** chip in the composer with a menu:
+    - **Continue from handoff** starts a new agent titled `[Handoff] <task>` in the same workspace
+      and opens it. The "Handoff saved" row in the chat has the same link for a handoff nobody has continued.
+    - **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
+      available only for an idle session with no handoff yet and with handoffs turned on.
+    - **Turn off / Turn on handoff for this session** pauses Baton for one agent. It is saved across
+      restarts and disabled once a handoff exists. In an ignored workspace or project the menu says so.
+    - **Set context threshold** lets you set a per-agent threshold percentage for this agent only, or
+      clear it back to the global threshold with "Use global threshold".
+  - **Context threshold.** At the end of each turn Baton reads the agent's reported context usage. When
+    it reaches the effective threshold (60% by default, 10–95%, per-agent override wins), the chip shows
+    "Baton 62%" with the last reported percentage and the "Handoff saved" row offers **Create handoff**
+    (writes only) and **Create and continue** (writes and opens a new agent). Nothing is written or opened
+    until you click. The prompt fires once per context; it re-arms on a new session or a continue.
+    Agents that report no context maximum use a 120,000-token fallback: the global percentage applies to it
+    (60% is 72,000 tokens), and a per-agent percentage override is ignored there. The idle handoff is kept, and skipped when a handoff
+    already exists for the same context.
 - **Stale handoff cleanup.** If you keep working in the original session and nobody continued the
   handoff, Baton deletes the stale file by default. Continued handoffs are kept, and a setting turns
   deletion off.
@@ -92,8 +102,10 @@ Under Settings -> Plugins -> Baton:
 | Storage location | `.paseo/handoffs` in each workspace | Where handoff files are saved. Accepts an absolute path, `~/...`, or a path relative to the workspace. If it can't be used, Baton saves to the default folder and the chat row says why. |
 | Delete unused handoffs | On | Deletes a handoff nobody continued once you keep working in the original session. Off keeps every file on disk. |
 | Clean up old handoffs | On, after 3 days (1-365) | Once a day and at start, deletes handoff files nobody continued that are older than the limit. |
-| Ignored projects and workspaces | none | Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers workspaces created later. |
-| Ignore new projects by default | Off | Projects that appear later start ignored until you switch them on. Projects that already exist keep their setting. |
+  | Ignored projects and workspaces | none | Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers workspaces created later. |
+  | Ignore new projects by default | Off | Projects that appear later start ignored until you switch them on. Projects that already exist keep their setting. |
+  | Context threshold | 60% (10-95) | When an agent's reported context usage reaches this percentage of its context window, Baton offers a handoff. Change it per agent from the Baton menu. |
+  | Context fallback | 120,000 tokens | When an agent reports no context maximum, the global threshold percentage applies to this limit (60% is 72,000 tokens). A per-agent percentage override is ignored there. |
 
 Changes are saved automatically a moment after you make them.
 
@@ -115,11 +127,19 @@ Baton listens to agent lifecycle events. When a turn ends it starts an idle time
 cancels it. When the timer fires on an idle agent, Baton reads its conversation back from Paseo, starts a
 writer subagent with a draft built from it, and takes the document the writer returns (or the file it
 saved itself), stamps it with a `Created:` line, saves it to the workspace and appends the "Handoff saved"
-row. Subagents, writers and ignored workspaces are skipped.
+row. Subagents, writers and ignored workspaces are skipped. At the end of each turn Baton also reads the
+agent's reported context usage (`lastUsage`, including `contextWindowUsedTokens` and
+`contextWindowMaxTokens`, where some providers leave the maximum unset) through `refresh()`; when the use
+reaches the effective threshold it offers the handoff prompt without writing anything. The threshold is a
+whole percentage (10–95%, default 60%) that can be overridden per agent from the Baton menu. It fires once
+per context and re-arms on a new session or a continue. Agents that report no context maximum use a
+120,000-token fallback as an absolute limit, with no per-agent percentage. The idle handoff is kept, and
+skipped when a context handoff already exists for the same context.
 
-State lives in `~/.paseo/plugin-data/baton/baton-state.json`, so a daemon restart recovers pending
-handoffs and re-appends rows for saved ones. Entries are pruned when the agent is archived or after
-7 days. Baton reads agent lifecycle events and the conversation through Paseo, runs read-only `git` commands in
+State lives in `~/.paseo/plugin-data/baton/baton-state.json` and `~/.paseo/plugin-data/baton/baton-context-state.json`,
+so a daemon restart recovers pending handoffs, re-appends rows for saved ones, and keeps per-agent
+threshold overrides and last reported percentages. Entries are pruned when the agent is archived or after
+7 days; the chat rows still open and continue those handoffs. Baton reads agent lifecycle events and the conversation through Paseo, runs read-only `git` commands in
 the workspace, and writes handoff files and its own state file. It never reads credentials and never logs secrets.
 
 See [OVERVIEW.md](OVERVIEW.md) for the plugin overview shipped with the package.
@@ -138,7 +158,7 @@ Layout:
 - `client/` - Baton chip, chat row, handoff viewer and settings screen (app side)
 - `shared/` - Zod contracts, RPCs and settings shared by both sides; no runtime code from either side
 - `docs/` - maintainer notes, such as the registry submission text (not shipped in the package)
-- `test/` - Vitest tests for the controller, core state machine, store, summaries and agent read tools
+- `test/` - Vitest tests for the controller, core state machine, store, summaries, agent read tools, settings and context-usage state; `test/support/` holds shared test helpers
 
 Server code must not import client code, and the reverse.
 
@@ -147,7 +167,7 @@ Server code must not import client code, and the reverse.
 - Paseo gives plugins no way to open a file in the host's own file tab, so Baton shows the handoff in
   its own screen, rendered with Paseo's Markdown component.
 - Chat rows can't be removed, so the "Handoff saved" row stays after a handoff is cleaned up and its
-  link then reports the handoff can no longer be opened.
+  link then reports the file missing.
 - The Baton chip's state refreshes when an agent's status changes, so a menu left open can be stale
   after you change settings.
 - If Paseo restarts while a handoff is being written, that handoff can be cut off. With "Resume agents

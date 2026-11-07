@@ -18,9 +18,23 @@ export function setArchiveAgent(archive: (agentId: string) => Promise<unknown>):
   archiveAgent = archive;
 }
 
+let continueHandoff: ((agentId: string, path: string) => Promise<unknown>) | null = null;
+
+export function setContinueHandoff(continueFrom: (agentId: string, path: string) => Promise<unknown>): void {
+  continueHandoff = continueFrom;
+}
+
+let createThresholdHandoff: ((agentId: string, continueAfter: boolean) => Promise<unknown>) | null = null;
+
+export function setCreateThresholdHandoff(create: (agentId: string, continueAfter: boolean) => Promise<unknown>): void {
+  createThresholdHandoff = create;
+}
+
 export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonRowData>) {
   const data = item.data;
   const [archiving, setArchiving] = useState(false);
+  const [continuing, setContinuing] = useState(false);
+  const [creating, setCreating] = useState<null | "create" | "continue">(null);
   const styles = useMemo(
     () => ({
       card: {
@@ -56,20 +70,61 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
 
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>Handoff saved</Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Review the handoff"
-        onPress={() => {
-          if (openHandoff) void openHandoff(data.path).catch((error: unknown) => {
-            console.error(`[baton] opening handoff failed: ${String(error)}`);
-          });
-        }}
-      >
-        <Text style={styles.path} numberOfLines={2}>
-          {data.path}
-        </Text>
-      </Pressable>
+      <Text style={styles.title}>
+        {data.usedPercent !== undefined ? `Handoff (${Math.round(data.usedPercent)}% full)` : "Handoff saved"}
+      </Text>
+      {data.usedPercent !== undefined ? (
+        <Text style={styles.hint}>This context is {Math.round(data.usedPercent)}% full. Create a handoff to continue in a fresh session.</Text>
+      ) : null}
+      {data.path !== undefined ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Review the handoff"
+          onPress={() => {
+            if (openHandoff && data.path !== undefined) void openHandoff(data.path).catch((error: unknown) => {
+              console.error(`[baton] opening handoff failed: ${String(error)}`);
+            });
+          }}
+        >
+          <Text style={styles.path} numberOfLines={2}>
+            {data.path}
+          </Text>
+        </Pressable>
+      ) : null}
+      {data.usedPercent !== undefined && !data.continuedAgentId ? (
+        <View style={{ flexDirection: "row", gap: layout.compact ? 6 : 8 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Create handoff"
+            disabled={creating !== null}
+            onPress={() => {
+              if (!createThresholdHandoff || creating !== null) return;
+              setCreating("create");
+              void createThresholdHandoff(data.agentId, false).catch((error: unknown) => {
+                setCreating(null);
+                console.error(`[baton] create handoff failed: ${String(error)}`);
+              });
+            }}
+          >
+            <Text style={styles.path}>{creating === "create" ? "Creating..." : "Create handoff"}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Create and continue"
+            disabled={creating !== null}
+            onPress={() => {
+              if (!createThresholdHandoff || creating !== null) return;
+              setCreating("continue");
+              void createThresholdHandoff(data.agentId, true).catch((error: unknown) => {
+                setCreating(null);
+                console.error(`[baton] create and continue failed: ${String(error)}`);
+              });
+            }}
+          >
+            <Text style={styles.path}>{creating === "continue" ? "Continuing..." : "Create and continue"}</Text>
+          </Pressable>
+        </View>
+      ) : null}
       {data.savedAt ? <Text style={styles.hint}>Saved {new Date(data.savedAt).toLocaleString()}</Text> : null}
       {data.notice ? <Text style={styles.warning}>{data.notice}</Text> : null}
       {data.continuedAgentId ? (
@@ -93,9 +148,23 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
             <Text style={styles.path}>{archiving ? "Archiving..." : "Archive this tab"}</Text>
           </Pressable>
         </>
-      ) : (
-        <Text style={styles.hint}>Use the Baton chip in the composer to continue.</Text>
-      )}
+      ) : data.usedPercent === undefined && data.path !== undefined ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Continue from this handoff"
+          disabled={continuing}
+          onPress={() => {
+            if (!continueHandoff || continuing || data.path === undefined) return;
+            setContinuing(true);
+            void continueHandoff(data.agentId, data.path).catch((error: unknown) => {
+              setContinuing(false);
+              console.error(`[baton] continue failed: ${String(error)}`);
+            });
+          }}
+        >
+          <Text style={styles.path}>{continuing ? "Continuing..." : "Continue from this handoff"}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

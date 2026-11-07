@@ -1,5 +1,6 @@
 import type { AgentTimelineItem, ToolCallTimelineItem } from "@getpaseo/protocol/agent-types";
 import { DETAIL_LIMITS, type DraftLimits } from "../shared/baton";
+import { CONTINUE_BODY_MARK, CONTINUE_LEAD } from "./handoff";
 
 type TranscriptLimits = Pick<DraftLimits, "maxChars" | "maxUserChars" | "maxAssistantChars">;
 
@@ -8,11 +9,39 @@ export interface TimelineMessage {
   text: string;
 }
 
+/**
+ * A request that started a turn without the user typing it: a heartbeat, or a message another agent or Paseo
+ * sent. Paseo records these as tool calls, not user messages, so they are read from there.
+ */
+function triggerRequest(item: AgentTimelineItem): { label: string; text: string } | null {
+  if (!isToolCall(item)) return null;
+  if (item.agentMessage) {
+    const { event, sender, text } = item.agentMessage;
+    const from = sender.title?.trim() || sender.id;
+    return { label: event === "message" ? `message from ${from}` : `${event} from ${from}`, text };
+  }
+  if (item.name === "heartbeat" && item.detail.type === "plain_text" && item.detail.text) {
+    return { label: "heartbeat", text: item.detail.text };
+  }
+  return null;
+}
+
+/** What a timeline item contributes as a user request: a user message, or a trigger that started a turn. */
+function requestOf(item: AgentTimelineItem): { text: string; label?: string } | null {
+  if (item.type === "user_message") return { text: visibleRequest(item.text) };
+  const trigger = triggerRequest(item);
+  return trigger ? { text: trigger.text, label: trigger.label } : null;
+}
+
 export function messageTexts(timeline: readonly AgentTimelineItem[]): TimelineMessage[] {
   const out: TimelineMessage[] = [];
   for (const item of timeline) {
-    if (item.type === "user_message") out.push({ role: "user", text: item.text });
-    else if (item.type === "assistant_message") out.push({ role: "assistant", text: item.text });
+    if (item.type === "assistant_message") {
+      out.push({ role: "assistant", text: item.text });
+      continue;
+    }
+    const request = requestOf(item);
+    if (request) out.push({ role: "user", text: request.label ? `[${request.label}] ${request.text}` : request.text });
   }
   return out;
 }
@@ -24,9 +53,32 @@ export function firstUserText(timeline: readonly AgentTimelineItem[]): string | 
   return null;
 }
 
-/** The handoff file a session was started from, when its first message is Baton's "Read <file> and continue the task." */
+/** The first request in the timeline: what the user typed, or what started a turn when no user message came first. */
+export function firstRequestText(timeline: readonly AgentTimelineItem[]): string | null {
+  for (const item of timeline) {
+    const request = requestOf(item);
+    if (request && request.text.trim()) return request.text;
+  }
+  return null;
+}
+
+/**
+ * A user message as drafts show it. A continue prompt carries the handoff's text after its first sentence; that
+ * text is left out, since the handoff file itself is read separately as the previous handoff.
+ */
+export function visibleRequest(text: string): string {
+  const cut = text.indexOf(CONTINUE_BODY_MARK);
+  return (cut >= 0 ? text.slice(0, cut) : text).trim();
+}
+
+/** The handoff file a session was started from, when its first message is Baton's continue prompt. */
+const CONTINUE_PATH_PATTERN = new RegExp(`^${CONTINUE_LEAD}\\s+(\\S+\\.md)\\.`);
+
 export function previousHandoffPath(timeline: readonly AgentTimelineItem[]): string | null {
-  const match = /^Read\s+(\S+\.md)\s+and continue the task\.?\s*$/.exec(firstUserText(timeline)?.trim() ?? "");
+  const first = visibleRequest(firstUserText(timeline) ?? "");
+  const match =
+    CONTINUE_PATH_PATTERN.exec(first) ??
+    /^Read\s+(\S+\.md)\s+and continue the task\.?\s*$/.exec(first);
   return match ? match[1] : null;
 }
 
@@ -220,7 +272,7 @@ export interface MechanicalHandoffInput {
 export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
   const limits = input.limits ?? DETAIL_LIMITS.standard;
   const capped = (text: string | null) => (text === null ? "Not captured." : cutMiddle(text, limits.maxTextChars));
-  const task = capped(firstUserText(input.timeline));
+  const task = capped(firstRequestText(input.timeline));
   const currentState = capped(lastAssistantText(input.timeline));
   const files = touchedFilePaths(input.timeline);
   const shownFiles = files.slice(-MAX_FILES);

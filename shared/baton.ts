@@ -49,6 +49,18 @@ export const MIN_FIRE_DELAY_MS = 1000;
 export const MAX_IDLE_DELAY_MINUTES = 240;
 export const DEFAULT_CLEANUP_DAYS = 3;
 export const MAX_CLEANUP_DAYS = 365;
+export const DEFAULT_CONTEXT_THRESHOLD_PERCENT = 60;
+export const MIN_CONTEXT_THRESHOLD_PERCENT = 10;
+export const MAX_CONTEXT_THRESHOLD_PERCENT = 95;
+/** A whole percentage of the context window at which Baton offers a handoff. Used by settings and per-agent overrides. */
+export const contextThresholdPercentSchema = z
+  .number()
+  .int()
+  .min(MIN_CONTEXT_THRESHOLD_PERCENT)
+  .max(MAX_CONTEXT_THRESHOLD_PERCENT);
+export const DEFAULT_CONTEXT_FALLBACK_TOKENS = 120_000;
+export const MIN_CONTEXT_FALLBACK_TOKENS = 1_000;
+export const MAX_CONTEXT_FALLBACK_TOKENS = 10_000_000;
 /** A subagent mid-turn longer than this no longer holds back a handoff (it probably never reported back). */
 export const SUBAGENT_WAIT_LIMIT_MS = 4 * 60 * 60 * 1000;
 
@@ -86,6 +98,13 @@ export const batonSettingsSchema = z.object({
   waitForSubagents: z.boolean().default(true),
   cleanupOldHandoffs: z.boolean().default(true),
   cleanupAfterDays: z.number().int().min(1).max(MAX_CLEANUP_DAYS).default(DEFAULT_CLEANUP_DAYS),
+  contextThresholdPercent: contextThresholdPercentSchema.default(DEFAULT_CONTEXT_THRESHOLD_PERCENT),
+  contextFallbackTokens: z
+    .number()
+    .int()
+    .min(MIN_CONTEXT_FALLBACK_TOKENS)
+    .max(MAX_CONTEXT_FALLBACK_TOKENS)
+    .default(DEFAULT_CONTEXT_FALLBACK_TOKENS),
   ignoredWorkspaceIds: z.array(z.string()).default([]),
   ignoredProjectIds: z.array(z.string()).default([]),
   ignoreNewProjects: z.boolean().default(false),
@@ -110,23 +129,16 @@ export const batonSettings = defineSettings({
   version: 11,
   schema: batonSettingsSchema,
   migrate: (values) => {
+    // Keeps every stored setting that still validates, so a setting added later (such as agentReadTools) is not
+    // dropped by a migration; a stored value that no longer validates falls back to its default.
     const old = values && typeof values === "object" ? (values as Record<string, unknown>) : {};
-    return {
-      ...DEFAULT_SETTINGS,
-      ...(typeof old.idleDelayMinutes === "number" ? { idleDelayMinutes: old.idleDelayMinutes } : {}),
-      ...(typeof old.handoffProfileId === "string" ? { handoffProfileId: old.handoffProfileId } : {}),
-      ...(typeof old.deleteStaleHandoffs === "boolean" ? { deleteStaleHandoffs: old.deleteStaleHandoffs } : {}),
-      ...(typeof old.waitForSubagents === "boolean" ? { waitForSubagents: old.waitForSubagents } : {}),
-      ...(typeof old.cleanupOldHandoffs === "boolean" ? { cleanupOldHandoffs: old.cleanupOldHandoffs } : {}),
-      ...(typeof old.cleanupAfterDays === "number" ? { cleanupAfterDays: old.cleanupAfterDays } : {}),
-      ...(DETAIL_LEVELS.includes(old.conversationDetail as DetailLevel) ? { conversationDetail: old.conversationDetail as DetailLevel } : {}),
-      ...(typeof old.includeRepoState === "boolean" ? { includeRepoState: old.includeRepoState } : {}),
-      ...(typeof old.handoffDirectory === "string" ? { handoffDirectory: old.handoffDirectory } : {}),
-      ...(Array.isArray(old.ignoredWorkspaceIds) ? { ignoredWorkspaceIds: old.ignoredWorkspaceIds } : {}),
-      ...(Array.isArray(old.ignoredProjectIds) ? { ignoredProjectIds: old.ignoredProjectIds } : {}),
-      ...(typeof old.ignoreNewProjects === "boolean" ? { ignoreNewProjects: old.ignoreNewProjects } : {}),
-      ...(Array.isArray(old.knownProjectIds) ? { knownProjectIds: old.knownProjectIds } : {}),
-    };
+    const kept: Record<string, unknown> = {};
+    for (const [key, field] of Object.entries(batonSettingsSchema.shape)) {
+      if (!(key in old)) continue;
+      const parsed = field.safeParse(old[key]);
+      if (parsed.success) kept[key] = parsed.data;
+    }
+    return { ...DEFAULT_SETTINGS, ...kept };
   },
 });
 
@@ -137,11 +149,14 @@ export const BATON_WRITER_TITLE = "[Handoff writer]";
 
 export const batonRowSchema = z.object({
   agentId: z.string(),
-  path: z.string(),
+  /** Absent on the threshold prompt row: no handoff file exists until the user acts on it. */
+  path: z.string().optional(),
   continuedAgentId: z.string().optional(),
   continuedTitle: z.string().optional(),
   notice: z.string().optional(),
   savedAt: z.number().optional(),
+  /** Set on the threshold prompt row: the percent the context was at. */
+  usedPercent: z.number().optional(),
 });
 export type BatonRowData = z.infer<typeof batonRowSchema>;
 
@@ -200,6 +215,9 @@ export const wakeRpc = defineRpc({
     disabledAgentIds: z.array(z.string()).default([]),
     writingAgentIds: z.array(z.string()).default([]),
     ignoredWorkspaces: z.record(z.string(), z.enum(["workspace", "project"])).default({}),
+    contextPercents: z.record(z.string(), z.number()).default({}),
+    /** The context maximum, in tokens, that Paseo reported for each agent. Absent when none was reported. */
+    contextLimits: z.record(z.string(), z.number()).default({}),
   }),
 });
 
@@ -222,4 +240,24 @@ export const setEnabledRpc = defineRpc({
   output: z.object({
     enabled: z.boolean(),
   }),
+});
+export const setContextThresholdRpc = defineRpc({
+  name: "baton.set-context-threshold",
+  input: z.object({
+    agentId: z.string(),
+    percent: contextThresholdPercentSchema.nullable(),
+  }),
+  output: z.object({ percent: contextThresholdPercentSchema.nullable() }),
+});
+
+export const getContextThresholdRpc = defineRpc({
+  name: "baton.get-context-threshold",
+  input: z.object({ agentId: z.string() }),
+  output: z.object({ percent: contextThresholdPercentSchema.nullable() }),
+});
+
+export const createThresholdHandoffRpc = defineRpc({
+  name: "baton.create-threshold-handoff",
+  input: z.object({ agentId: z.string(), continue: z.boolean() }),
+  output: z.object({ started: z.boolean(), agentId: z.string().optional() }),
 });

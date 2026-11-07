@@ -1,10 +1,10 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { createBatonPills } from "./client/baton-pill";
-import { BatonRow, setArchiveAgent, setOpenHandoff } from "./client/baton-row";
+import { BatonRow, setArchiveAgent, setContinueHandoff, setCreateThresholdHandoff, setOpenHandoff } from "./client/baton-row";
 import { HANDOFF_VIEW_SCREEN_ID, HandoffViewScreen } from "./client/handoff-view";
 import { OPEN_AGENT_SCREEN_ID, OpenAgentScreen } from "./client/open-agent";
 import { BatonSettingsScreen } from "./client/settings";
-import { archiveAgentRpc, batonRowSchema } from "./shared/baton";
+import { archiveAgentRpc, batonRowSchema, continueHandoffRpc, createThresholdHandoffRpc } from "./shared/baton";
 
 export default function contribute(client: PluginClientContext) {
   client.addTimelineRenderer({
@@ -39,6 +39,20 @@ export default function contribute(client: PluginClientContext) {
   });
 
   setArchiveAgent((agentId) => client.rpc(archiveAgentRpc, { agentId }));
+
+  setContinueHandoff((agentId, path) =>
+    client.rpc(continueHandoffRpc, { agentId, path }).then(({ agentId: newAgentId }) => {
+      client.openScreen({ screenId: OPEN_AGENT_SCREEN_ID, params: { agentId: newAgentId } });
+    }),
+  );
+
+  setCreateThresholdHandoff((agentId, cont) =>
+    client.rpc(createThresholdHandoffRpc, { agentId, continue: cont }).then((result) => {
+      if (result.agentId) {
+        client.openScreen({ screenId: OPEN_AGENT_SCREEN_ID, params: { agentId: result.agentId } });
+      }
+    }),
+  );
 
   const pills = createBatonPills({ client });
 

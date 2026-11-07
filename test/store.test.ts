@@ -1,38 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { BatonStoreIo } from "../server/store";
 import { loadState, saveState } from "../server/store";
-
-function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files: Map<string, string> } {
-  const files = new Map(Object.entries(initial));
-  return {
-    files,
-    async mkdir() {},
-    async readFile(file) {
-      const value = files.get(file);
-      if (value === undefined) {
-        const error = new Error(`ENOENT: ${file}`) as NodeJS.ErrnoException;
-        error.code = "ENOENT";
-        throw error;
-      }
-      return value;
-    },
-    async writeFile(file, data) {
-      files.set(file, data);
-    },
-    async rename(from, to) {
-      const value = files.get(from);
-      if (value === undefined) throw new Error(`ENOENT: ${from}`);
-      files.delete(from);
-      files.set(to, value);
-    },
-    async unlink(file) {
-      files.delete(file);
-    },
-    async exists(file) {
-      return files.has(file);
-    },
-  };
-}
+import { memoryIo } from "./support/memory-io";
 
 const STATE_FILE = "/home/.paseo/plugin-data/baton/baton-state.json";
 

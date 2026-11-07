@@ -23,17 +23,27 @@ chip in the composer that opens a menu:
 
 - **Continue from handoff** (only when a handoff exists) creates a new agent in the same workspace
   titled `[Handoff] <short title>` (a short summary the writer adds so you can recall the work later) with the prompt to read the file and continue the task. The row in the original tab updates
-  to say which tab it was continued on, with an **Archive this tab** link.
+  to say which tab it was continued on, with an **Archive this tab** link. The "Handoff saved" row also has a
+  **Continue from this handoff** link for a handoff nobody has continued yet, even when Baton no longer tracks it.
 - **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
   available only for an idle session that has no handoff yet and has handoffs turned on, and is hidden
   in an ignored workspace or project.
 - **Turn off / Turn on handoff for this session** stops Baton from writing a handoff for that agent.
   The state is saved, so it survives restarts. Turning off is disabled once a handoff exists. In an ignored workspace or project the menu shows
   a disabled note saying so instead of the toggle.
+- **Set context threshold** (`contextThresholdPercent`, default 60): a whole percentage (10–95) of the
+  model's reported context window at which Baton offers a handoff. Each agent can override it from its
+  **Set context threshold** menu item, for that agent only. When usage reaches the threshold, the chip shows
+  "Baton 62%" and the existing handoff message offers "Create handoff" (write only) and "Create and continue"
+  (write and open a new agent). Nothing is written or opened until you click. The prompt fires once per
+  context and re-arms on a new session or a continue. For agents that report no context maximum, a
+  120,000-token fallback (`contextFallbackTokens`) is used when no maximum is reported: the global percentage
+  applies to it (60% is 72,000 tokens), and a per-agent percentage override is ignored there. The idle handoff is kept, and skipped when a context handoff already exists
+  for the same context.
 
 If you keep working in the original session after a handoff was saved and nobody continued it, Baton
 deletes the stale handoff file by default; a setting turns this off. A handoff that was already continued in a new agent is kept. The
-"Handoff saved" row stays in the chat history, but its link then says the handoff can no longer be opened.
+"Handoff saved" row stays in the chat history. Its link reports the file missing once the file has been deleted.
 
 ## Setup
 
@@ -63,6 +73,8 @@ Settings live under Settings -> Plugins -> Baton. Changes are saved automaticall
   sees. Compact reads up to 1,000 history entries and keeps about 30,000 characters, Standard 2,000 entries
   and 60,000, Full 5,000 entries and 150,000. Long messages keep their start and end. When the conversation
   is longer than what was read, the writer is told and the "Handoff saved" row says earlier history was cut.
+- **Context fallback** (`contextFallbackTokens`, default 120,000): the limit the global percentage is applied to
+  when an agent reports no context maximum (60% is 72,000 tokens). Ignores per-agent percentages there.
 - **Include repo state** (`includeRepoState`, default on): adds the branch, changed files and recent commit
   titles from git to what the writer sees. Turn it off to keep file names and commit messages out of it.
 - **Storage location** (`handoffDirectory`, default empty): where handoff files are saved. Empty means
@@ -72,7 +84,7 @@ Settings live under Settings -> Plugins -> Baton. Changes are saved automaticall
   says why.
 - **Delete unused handoffs when a session resumes** (`deleteStaleHandoffs`, default on): removes a
   handoff file that nobody continued once you keep working in the original session. Turn it off to
-  keep every file. The chat row can then no longer open it, but the file stays on disk.
+  keep every file. The chat row still opens it and Continue still works, because the row names the file.
 - **Clean up old handoffs automatically** (`cleanupOldHandoffs`, default on) and **Clean up after
   (days)** (`cleanupAfterDays`, default 3, 1-365): when Baton starts and once a day after that, it
   deletes handoff files nobody continued that are older than the limit, counted from when they were
@@ -118,16 +130,17 @@ saved.
 
 Handoff files stay on the machine that runs the Paseo daemon, in `.paseo/handoffs` inside each
 workspace or in the storage location you set. They contain a summary of the conversation, so keep
-that folder out of version control if the work is private. Baton's own state file is in
-`~/.paseo/plugin-data/baton`. Baton makes no network requests and never reads credentials. The "Open
+that folder out of version control if the work is private. Baton's own state files
+are in `~/.paseo/plugin-data/baton` (`baton-state.json`, `baton-context-state.json`). Baton makes no network requests and never reads credentials. The "Open
 in default app" button hands the file to your operating system's opener.
 
 ## Capabilities and limits
 
-Entries persist in a JSON file under the daemon home, so a daemon restart recovers pending handoffs,
-skips expired ones, and re-appends chat rows for saved handoffs. A handoff is written at most once
+Entries persist in JSON files under the daemon home, so a daemon restart recovers pending handoffs,
+skips expired ones, re-appends chat rows for saved handoffs, and keeps per-agent threshold
+overrides and last reported percentages. A handoff is written at most once
 per idle period. Subagent tool calls are not handed off because they are provider child sessions
-rather than agents. Done entries are pruned when the agent is archived or after 7 days. Chat rows
+rather than agents. Done entries are pruned when the agent is archived or after 7 days, and the chat rows still open and continue those handoffs. Chat rows
 live in daemon memory and are restored after a daemon restart. Baton reads agent lifecycle events
 and the conversation through Paseo, runs read-only `git` commands in the workspace, and writes handoff files
 and its own state file. It never logs secrets.

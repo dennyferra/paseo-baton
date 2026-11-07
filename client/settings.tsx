@@ -11,7 +11,11 @@ import {
   DETAIL_LIMITS,
   isProjectIgnored,
   MAX_CLEANUP_DAYS,
+  MAX_CONTEXT_FALLBACK_TOKENS,
+  MAX_CONTEXT_THRESHOLD_PERCENT,
   MAX_IDLE_DELAY_MINUTES,
+  MIN_CONTEXT_FALLBACK_TOKENS,
+  MIN_CONTEXT_THRESHOLD_PERCENT,
   type DetailLevel,
 } from "../shared/baton";
 
@@ -72,10 +76,10 @@ function stableJson(value: unknown): string {
   );
 }
 
-function clampInt(value: string, fallback: number, max: number): number {
+function clampInt(value: string, fallback: number, max: number, min = 1): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(max, Math.max(1, parsed));
+  return Math.min(max, Math.max(min, parsed));
 }
 
 export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
@@ -297,15 +301,45 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       <SettingsCard>
         <SettingsInput
           label="Idle delay (minutes)"
-          hint={`Write a handoff once an agent has been idle this long (1-${MAX_IDLE_DELAY_MINUTES}). The countdown starts when the agent's own turn ends, even if subagents it started are still running.`}
+          hint={`Write a handoff once an agent has been idle this long (1-${MAX_IDLE_DELAY_MINUTES}).`}
           initialValue={String(draft.idleDelayMinutes)}
           onChangeText={(value) => update({ idleDelayMinutes: clampInt(value, draft.idleDelayMinutes, MAX_IDLE_DELAY_MINUTES) })}
         />
         <SettingsSwitch
           label="Wait for subagents to finish"
-          hint="If agents started by this one are still working when the countdown ends, restart it instead of writing the handoff. Turn off to write it regardless. A subagent still running after 4 hours is no longer waited for. Subagents that run inside the provider itself (for example Claude's Task tool) are not visible to Baton and are not waited for."
+          hint="Restart the countdown while subagents the agent started are still working, up to 4 hours. Subagents that run inside the provider, such as Claude's Task tool, are not visible to Baton and are not waited for."
           value={draft.waitForSubagents}
           onValueChange={(value) => update({ waitForSubagents: value })}
+        />
+        <SettingsInput
+          label="Context threshold (%)"
+          hint={`Offer a handoff once an idle agent's context reaches this share of its maximum (${MIN_CONTEXT_THRESHOLD_PERCENT}-${MAX_CONTEXT_THRESHOLD_PERCENT}). The Baton menu can override it per agent.`}
+          initialValue={String(draft.contextThresholdPercent)}
+          onChangeText={(value) =>
+            update({
+              contextThresholdPercent: clampInt(
+                value,
+                draft.contextThresholdPercent,
+                MAX_CONTEXT_THRESHOLD_PERCENT,
+                MIN_CONTEXT_THRESHOLD_PERCENT,
+              ),
+            })
+          }
+        />
+        <SettingsInput
+          label="Fallback context size (tokens)"
+          hint="The maximum used for agents that report none. The threshold applies to this many tokens there, and per-agent overrides do not."
+          initialValue={String(draft.contextFallbackTokens)}
+          onChangeText={(value) =>
+            update({
+              contextFallbackTokens: clampInt(
+                value,
+                draft.contextFallbackTokens,
+                MAX_CONTEXT_FALLBACK_TOKENS,
+                MIN_CONTEXT_FALLBACK_TOKENS,
+              ),
+            })
+          }
         />
       </SettingsCard>
       <Text style={styles.sectionTitle}>Handoff writer</Text>
@@ -329,12 +363,9 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
             </Pressable>
           );
         })}
-      </SettingsCard>
-      <Text style={styles.sectionTitle}>Handoff detail</Text>
-      <SettingsCard>
+        <Text style={styles.subTitle}>Conversation detail</Text>
         <Text style={[styles.hint, { marginBottom: 8 }]}>
-          How much of the conversation the writer sees. Long messages keep their start and end, and the writer is told
-          when earlier history was left out.
+          How much of the conversation the writer sees. Long messages keep their start and end.
         </Text>
         {DETAIL_LEVELS.map((level) => {
           const selected = draft.conversationDetail === level;
@@ -354,7 +385,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         })}
         <SettingsSwitch
           label="Include repo state"
-          hint="Add the branch, changed files and recent commit titles from git. They go to the writer's provider with the conversation. Turn off to keep file names and commit messages out of the draft."
+          hint="Add the branch, changed files and recent commit titles from git to the writer's prompt. Turn off to keep file names and commit messages out."
           value={draft.includeRepoState}
           onValueChange={(value) => update({ includeRepoState: value })}
         />
@@ -397,13 +428,12 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       </SettingsCard>
       <Text style={styles.sectionTitle}>Ignored projects and workspaces</Text>
       <Text style={[styles.hint, { marginBottom: 8 }]}>
-        Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers all of its
-        workspaces, including ones created later.
+        Agents in an ignored project or workspace never produce handoffs. Ignoring a project covers all its workspaces, including new ones.
       </Text>
       <SettingsCard>
         <SettingsSwitch
           label="Ignore new projects by default"
-          hint="Off by default, so new projects get handoffs. Turn on to leave projects that appear from now on ignored until you switch them on here. Projects listed below keep their current setting."
+          hint="Turn on to ignore projects that appear from now on until you switch them on below. Projects listed below keep their current setting."
           value={draft.ignoreNewProjects}
           disabled={!workspacesLoaded}
           onValueChange={setIgnoreNewProjects}

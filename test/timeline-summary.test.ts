@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import { buildContinuePrompt } from "../server/handoff";
 import {
   compactionCount,
   cutMiddle,
   failureSummaries,
+  firstRequestText,
   firstUserText,
   latestPlan,
+  messageTexts,
   latestTodos,
   shellProgram,
   subAgentSummaries,
@@ -277,6 +280,17 @@ describe("previousHandoffPath", () => {
     expect(previousHandoffPath(timeline([]))).toBeNull();
   });
 
+  it("finds the file in the continue prompt that carries the handoff's text", () => {
+    const prompt = buildContinuePrompt("/work/.paseo/handoffs/abc.md", "# Task\n\nFix the bug.\n\nAlmost there.");
+    const items = timeline([{ type: "user_message", text: prompt }]);
+    expect(previousHandoffPath(items)).toBe("/work/.paseo/handoffs/abc.md");
+    // The text stays out of the drafts: the task shows the sentence that names the file, not the whole handoff.
+    expect(firstRequestText(items)).toBe(
+      "This session continues the handoff saved at /work/.paseo/handoffs/abc.md. Its full text is below, so there is no need to read the file.",
+    );
+    expect(messageTexts(items)).toEqual([{ role: "user", text: expect.not.stringContaining("Almost there.") }]);
+  });
+
   it("puts the previous handoff in the draft", () => {
     const doc = renderMechanicalHandoff({
       agentId: "a",
@@ -399,5 +413,60 @@ describe("signals beyond messages and files", () => {
     expect(doc).toContain("## Plan (latest)\n\nShip it in two steps");
     expect(doc).toContain("- error: Build failed");
     expect(doc).toContain("compacted 1 time,");
+  });
+});
+
+describe("requests the user did not type", () => {
+  const heartbeat = {
+    type: "tool_call",
+    callId: "hb-1",
+    name: "heartbeat",
+    status: "completed",
+    error: null,
+    detail: { type: "plain_text", text: "Check whether the build is green" },
+  } as const;
+  const agentMessage = {
+    type: "tool_call",
+    callId: "am-1",
+    name: "agent_message",
+    status: "completed",
+    error: null,
+    agentMessage: { event: "message", sender: { id: "agent-x", title: "Reviewer" }, text: "Please review the diff" },
+    detail: { type: "plain_text", label: "message" },
+  } as const;
+
+  function draft(items: readonly AgentTimelineItem[]): string {
+    return renderMechanicalHandoff({ agentId: "agent-a", workspaceId: "wks-a", cwd: "/work", provider: null, timeline: items, now: 0 });
+  }
+
+  it("takes the task from a heartbeat when no user message came first", () => {
+    const items = timeline([heartbeat as AgentTimelineItem, { type: "assistant_message", text: "Build is green." }]);
+    expect(firstRequestText(items)).toBe("Check whether the build is green");
+    const doc = draft(items);
+    expect(doc.split("# Context")[0]).toContain("Check whether the build is green");
+    expect(doc).toContain("> user: [heartbeat] Check whether the build is green");
+  });
+
+  it("takes the task from another agent's message and names the sender in the transcript", () => {
+    const items = timeline([agentMessage as AgentTimelineItem, { type: "assistant_message", text: "Reviewing." }]);
+    const doc = draft(items);
+    expect(doc.split("# Context")[0]).toContain("Please review the diff");
+    expect(doc).toContain("> user: [message from Reviewer] Please review the diff");
+  });
+
+  it("keeps the user's own message as the task when it came first", () => {
+    const items = timeline([
+      { type: "user_message", text: "Fix the login bug" },
+      heartbeat as AgentTimelineItem,
+    ]);
+    expect(firstRequestText(items)).toBe("Fix the login bug");
+  });
+
+  it("does not take a continue pointer or a plain tool call as a request", () => {
+    const items = timeline([
+      { type: "tool_call", callId: "rd", name: "read", status: "completed", error: null, detail: { type: "read", filePath: "a.ts" } },
+    ]);
+    expect(firstRequestText(items)).toBeNull();
+    expect(previousHandoffPath([heartbeat as AgentTimelineItem])).toBeNull();
   });
 });

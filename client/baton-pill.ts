@@ -1,6 +1,6 @@
 import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { OPEN_AGENT_SCREEN_ID } from "./open-agent";
-import { BATON_WRITER_LABEL, batonRowSchema, continueHandoffRpc, createNowRpc, setEnabledRpc, wakeRpc } from "../shared/baton";
+import { BATON_WRITER_LABEL, batonRowSchema, continueHandoffRpc, createNowRpc, getContextThresholdRpc, setContextThresholdRpc, setEnabledRpc, wakeRpc } from "../shared/baton";
 
 export interface BatonHandoffInfo {
   agentId: string;
@@ -33,6 +33,16 @@ export interface BatonPillsHandle {
   dispose(): void;
 }
 
+/**
+ * A threshold menu label: the percent, with the token count it stands for when the agent's maximum is known.
+ * Without a reported maximum the per-agent override does not apply, so the label stays a bare percent.
+ */
+function thresholdTitle(percent: number, maxTokens: number | undefined): string {
+  if (maxTokens === undefined) return `${percent}%`;
+  const tokens = Math.round((maxTokens * percent) / 100);
+  return `${percent}% · ${tokens.toLocaleString("en-US")} tokens`;
+}
+
 export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
   const pills = new Map<string, PluginButtonRegistration>();
   const subscriptions = new Map<string, () => void>();
@@ -40,6 +50,10 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
   const tracked = new Map<string, TrackedAgent>();
   const disabled = new Set<string>();
   const writing = new Set<string>();
+  const contextPercents = new Map<string, number>();
+  // The context maximum, in tokens, that Paseo reported per agent. Agents without one have no entry.
+  const contextLimits = new Map<string, number>();
+  const thresholdOverrides = new Map<string, number | null>();
   let ignoredWorkspaces: Record<string, "workspace" | "project"> = {};
   const controller = new AbortController();
 
@@ -50,6 +64,9 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
     tracked.delete(agentId);
     disabled.delete(agentId);
     writing.delete(agentId);
+    contextPercents.delete(agentId);
+    contextLimits.delete(agentId);
+    thresholdOverrides.delete(agentId);
   }
 
   function releaseSubscription(agentId: string): void {
@@ -62,10 +79,15 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
     const info = infoByAgent.get(agentId);
     const isDisabled = disabled.has(agentId);
     const ignoredBy = ignoredWorkspaces[tracked.get(agentId)?.workspaceId ?? ""];
+    const percent = contextPercents.get(agentId);
+    // The chip carries the last reported percentage, updated at turn end. It
+    // has no colour states; "Baton" alone means no usage has been reported.
+    const chipLabel = percent === undefined ? "Baton" : `Baton ${Math.round(percent)}%`;
+    const override = thresholdOverrides.get(agentId) ?? null;
     return {
       title: "Baton",
       icon: isDisabled || ignoredBy ? ("Pause" as const) : ("Play" as const),
-      label: "Baton",
+      label: chipLabel,
       behavior: {
         kind: "menu" as const,
         items: [
@@ -138,6 +160,60 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
                   },
                 },
               },
+          // Per-agent threshold override; "Use global threshold" clears it.
+          {
+            kind: "item" as const,
+            id: "set-threshold",
+            title: override === null ? "Set context threshold" : `Context threshold: ${override}%`,
+            icon: "Play" as const,
+            visible: !ignoredBy,
+            behavior: {
+              kind: "menu" as const,
+              items: [
+                ...[40, 50, 60, 70, 80, 90].map((percent) => ({
+                  kind: "item" as const,
+                  id: `threshold-${percent}`,
+                  title: thresholdTitle(percent, contextLimits.get(agentId)),
+                  behavior: {
+                    kind: "action" as const,
+                    onPress(): void {
+                      void client
+                        .rpc(setContextThresholdRpc, { agentId, percent })
+                        .then(() => {
+                          thresholdOverrides.set(agentId, percent);
+                          syncPill(agentId);
+                          void refresh();
+                        })
+                        .catch((error: unknown) => {
+                          console.error(`[baton] set context threshold failed: ${String(error)}`);
+                        });
+                    },
+                  },
+                })),
+                {
+                  kind: "item" as const,
+                  id: "threshold-global",
+                  title: "Use global threshold",
+                  visible: override !== null,
+                  behavior: {
+                    kind: "action" as const,
+                    onPress(): void {
+                      void client
+                        .rpc(setContextThresholdRpc, { agentId, percent: null })
+                        .then(() => {
+                          thresholdOverrides.set(agentId, null);
+                          syncPill(agentId);
+                          void refresh();
+                        })
+                        .catch((error: unknown) => {
+                          console.error(`[baton] clear context threshold failed: ${String(error)}`);
+                        });
+                    },
+                  },
+                },
+              ],
+            },
+          },
         ],
       },
     };
@@ -170,13 +246,30 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
     if (refreshing) return refreshing;
     refreshing = client
       .rpc(wakeRpc, { workspaceIds: [...new Set([...tracked.values()].map((agent) => agent.workspaceId))] })
-      .then(({ handoffs, disabledAgentIds, writingAgentIds, ignoredWorkspaces: ignored }) => {
+      .then(({ handoffs, disabledAgentIds, writingAgentIds, ignoredWorkspaces: ignored, contextPercents: percents, contextLimits: limits }) => {
         ignoredWorkspaces = ignored;
         const ready = new Map(handoffs.map((info) => [info.agentId, info]));
         disabled.clear();
         for (const id of disabledAgentIds) disabled.add(id);
         writing.clear();
         for (const id of writingAgentIds) writing.add(id);
+        // The chip needs each agent's last percentage; the round-trip also
+        // refreshes a cached per-agent threshold override on first sight.
+        for (const [agentId, percent] of Object.entries(percents ?? {})) contextPercents.set(agentId, percent);
+        for (const [agentId, tokens] of Object.entries(limits ?? {})) contextLimits.set(agentId, tokens);
+        for (const agentId of tracked.keys()) {
+          if (!thresholdOverrides.has(agentId)) {
+            void client
+              .rpc(getContextThresholdRpc, { agentId })
+              .then(({ percent }) => {
+                thresholdOverrides.set(agentId, percent);
+                syncPill(agentId);
+              })
+              .catch((error: unknown) => {
+                console.error(`[baton] get context threshold failed: ${String(error)}`);
+              });
+          }
+        }
         for (const agentId of tracked.keys()) {
           const info = ready.get(agentId);
           if (info) infoByAgent.set(agentId, info);
@@ -217,7 +310,8 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
         const item = stream.event.item;
         if (item.type !== "plugin" || item.kind !== "baton-ready") return;
         const parsed = batonRowSchema.safeParse(item.data);
-        if (!parsed.success) return;
+        // A threshold prompt has no path: there is no handoff file to show or continue yet.
+        if (!parsed.success || parsed.data.path === undefined) return;
         registerPill({
           agentId: agent.id,
           workspaceId: agent.workspaceId ?? "",

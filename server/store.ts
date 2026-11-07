@@ -76,8 +76,13 @@ export async function saveState(
   stateFile: string,
   state: BatonState,
 ): Promise<void> {
-  await io.mkdir(path.dirname(stateFile));
-  const tmp = `${stateFile}.${process.pid}.${Date.now()}.tmp`;
-  await io.writeFile(tmp, JSON.stringify(state, null, 2));
-  await io.rename(tmp, stateFile);
+  await writeJsonAtomic(io, stateFile, JSON.stringify(state, null, 2));
+}
+
+/** Writes text to a file through a temporary sibling, so a crash cannot leave a half-written file. */
+export async function writeJsonAtomic(io: BatonStoreIo, file: string, text: string): Promise<void> {
+  await io.mkdir(path.dirname(file));
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await io.writeFile(tmp, text);
+  await io.rename(tmp, file);
 }

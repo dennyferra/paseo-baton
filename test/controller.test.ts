@@ -2,43 +2,28 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Controllers use the real git lookup by default, which is slow and irrelevant here.
 vi.mock("../server/repo-facts", () => ({ gatherRepoFacts: async () => "Branch: main" }));
-import type { BatonStoreIo } from "../server/store";
+import { memoryIo } from "./support/memory-io";
 import { BatonController } from "../server/controller";
-import { batonStateSchema, DEFAULT_SETTINGS, HANDOFF_FALLBACK_TIMEOUT_MS, SUBAGENT_WAIT_LIMIT_MS, type BatonSettings } from "../shared/baton";
+import { resolveContextStateFile } from "../server/paths";
+import { BATON_WRITER_TITLE, batonStateSchema, DEFAULT_SETTINGS, HANDOFF_FALLBACK_TIMEOUT_MS, SUBAGENT_WAIT_LIMIT_MS, type BatonSettings } from "../shared/baton";
 
 const NOW = 1_000_000;
 const HANDOFF_PATH = "/work/.paseo/handoffs/agent-a.md";
 
-function memoryIo(initial: Record<string, string> = {}): BatonStoreIo & { files: Map<string, string> } {
-  const files = new Map(Object.entries(initial));
-  return {
-    files,
-    async mkdir() {},
-    async readFile(file) {
-      const value = files.get(file);
-      if (value === undefined) {
-        const error = new Error(`ENOENT: ${file}`) as NodeJS.ErrnoException;
-        error.code = "ENOENT";
-        throw error;
-      }
-      return value;
-    },
-    async writeFile(file, data) {
-      files.set(file, data);
-    },
-    async rename(from, to) {
-      const value = files.get(from);
-      if (value === undefined) throw new Error(`ENOENT: ${from}`);
-      files.delete(from);
-      files.set(to, value);
-    },
-    async unlink(file) {
-      files.delete(file);
-    },
-    async exists(file) {
-      return files.has(file);
-    },
-  };
+const DATA_DIR = "/home/.paseo/plugin-data/baton";
+
+function makeController(
+  io: ReturnType<typeof memoryIo>,
+  extra: Partial<ConstructorParameters<typeof BatonController>[0]> = {},
+) {
+  return new BatonController({
+    dataDir: DATA_DIR,
+    settings: settings(),
+    log: () => {},
+    io,
+    now: () => NOW,
+    ...extra,
+  });
 }
 
 function settings(overrides: Partial<BatonSettings> = {}) {
@@ -53,6 +38,8 @@ function settings(overrides: Partial<BatonSettings> = {}) {
     waitForSubagents: true,
     cleanupOldHandoffs: true,
     cleanupAfterDays: 3,
+    contextThresholdPercent: 60,
+    contextFallbackTokens: 120_000,
     ignoredWorkspaceIds: [],
     ignoredProjectIds: [],
     ignoreNewProjects: false,
@@ -65,7 +52,7 @@ function settings(overrides: Partial<BatonSettings> = {}) {
   };
 }
 
-function stubPaseo(opts: { createId?: string; history?: Record<string, unknown[]>; thinkingOptionId?: string } = {}) {
+function stubPaseo(opts: { createId?: string; history?: Record<string, unknown[]>; thinkingOptionId?: string; usage?: Record<string, unknown>; usageByAgent?: Record<string, unknown> } = {}) {
   const createId = opts.createId ?? "agent-continued";
   const calls: string[] = [];
   const created: Array<Record<string, unknown>> = [];
@@ -80,7 +67,9 @@ function stubPaseo(opts: { createId?: string; history?: Record<string, unknown[]
       ref: (agentId: string) => ({
         refresh: async () => {
           const agent = agents.find((a) => a.id === agentId);
-          return agent ? { agent } : null;
+          if (!agent) return null;
+          const usage = opts.usageByAgent?.[agentId] ?? opts.usage;
+          return { agent: { ...agent, lastUsage: usage } };
         },
         send: async () => {
           calls.push(`send:${agentId}`);
@@ -267,16 +256,6 @@ describe("BatonController", () => {
       controller.dispose();
     });
   });
-
-  function makeController(io: ReturnType<typeof memoryIo>) {
-    return new BatonController({
-      dataDir: "/home/.paseo/plugin-data/baton",
-      settings: settings(),
-      log: () => {},
-      io,
-      now: () => NOW,
-    });
-  }
 
   it("skips idle handoffs while disabled for the session and resumes when re-enabled", async () => {
     const io = memoryIo();
@@ -530,6 +509,8 @@ describe("BatonController", () => {
     expect(result.title).toContain("Fix the bug");
     expect(created[0].title).toBe("[Handoff] Fix the bug.");
     expect(created[0].prompt).toContain(HANDOFF_PATH);
+    // The text is inline, so the new session does not depend on reading the file.
+    expect(created[0].prompt).toContain("# Current state\n\nAlmost there.");
     expect(created[0].config).toEqual({ provider: "claude/claude-sonnet-5-5" });
     expect(calls).toContain("append:agent-a");
     await controller.dispose();
@@ -694,6 +675,88 @@ describe("BatonController", () => {
     await expect(controller.openHandoff("/etc/passwd", paseo as never)).rejects.toThrow("Unknown handoff path");
     expect(opened).toEqual([HANDOFF_PATH]);
     await controller.dispose();
+  });
+
+  describe("handoffs named by the agent's own timeline", () => {
+    const OLD_PATH = "/old/place/.paseo/handoffs/agent-a.md";
+
+    function handoffRow(agentId: string, idleSince: number, path: string) {
+      return {
+        type: "plugin",
+        id: `baton:${agentId}:${idleSince}`,
+        pluginId: "baton",
+        kind: "baton-ready",
+        version: 1,
+        data: { agentId, path, savedAt: NOW },
+      };
+    }
+
+    it("opens and reads a handoff from a folder the settings no longer use, when its row is in the agent's timeline", async () => {
+      const opened: string[] = [];
+      const io = memoryIo({ [OLD_PATH]: "# Task\n\nFix the bug." });
+      const controller = makeController(io, {
+        openFile: async (filePath) => {
+          opened.push(filePath);
+        },
+      });
+      const { paseo } = stubPaseo({ history: { "agent-a": [handoffRow("agent-a", 500, OLD_PATH)] } });
+      expect(await controller.readHandoff(OLD_PATH, paseo as never)).toEqual({ content: "# Task\n\nFix the bug." });
+      expect(await controller.openHandoff(OLD_PATH, paseo as never)).toEqual({ opened: true });
+      expect(opened).toEqual([OLD_PATH]);
+      await controller.dispose();
+    });
+
+    it("refuses a file that no row in the agent's timeline names", async () => {
+      const io = memoryIo({ [OLD_PATH]: "# Task\n\nFix the bug." });
+      const controller = makeController(io);
+      const { paseo } = stubPaseo({ history: { "agent-a": [handoffRow("agent-a", 500, "/elsewhere/agent-a.md")] } });
+      await expect(controller.readHandoff(OLD_PATH, paseo as never)).rejects.toThrow("no longer tracks");
+      await controller.dispose();
+    });
+
+    it("does not open a file only another agent's timeline names", async () => {
+      const opened: string[] = [];
+      const io = memoryIo({ [OLD_PATH]: "# Task\n\nFix the bug." });
+      const controller = new BatonController({
+        dataDir: "/home/.paseo/plugin-data/baton",
+        settings: settings(),
+        log: () => {},
+        io,
+        now: () => NOW,
+        openFile: async (filePath) => {
+          opened.push(filePath);
+        },
+      });
+      const { paseo } = stubPaseo({ history: { "agent-b": [handoffRow("agent-b", 500, OLD_PATH)] } });
+      await expect(controller.openHandoff(OLD_PATH, paseo as never)).rejects.toThrow("Unknown handoff path");
+      expect(opened).toEqual([]);
+      await controller.dispose();
+    });
+
+    it("continues a handoff whose entry was dropped from its row, and keeps the same row", async () => {
+      const io = memoryIo({ [OLD_PATH]: "# Task\n\nFix the bug." });
+      const controller = makeController(io);
+      const { paseo, created, appended } = stubPaseo({ history: { "agent-a": [handoffRow("agent-a", 500, OLD_PATH)] } });
+      const result = await controller.continue({ agentId: "agent-a", path: OLD_PATH }, paseo as never);
+      expect(result.agentId).toBe("agent-continued");
+      expect(created).toHaveLength(1);
+      expect(appended[0]).toMatchObject({ id: "baton:agent-a:500", kind: "baton-ready" });
+      expect((appended[0].data as { continuedAgentId?: string }).continuedAgentId).toBe("agent-continued");
+      await controller.dispose();
+      const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));
+      expect(state["agent-a"]).toMatchObject({ status: "done", path: OLD_PATH, continuedAgentId: "agent-continued" });
+    });
+
+    it("refuses to continue a path that no row in the agent's timeline names", async () => {
+      const io = memoryIo({ [OLD_PATH]: "# Task\n\nFix the bug." });
+      const controller = makeController(io);
+      const { paseo, created } = stubPaseo({ history: { "agent-a": [handoffRow("agent-a", 500, "/elsewhere/agent-a.md")] } });
+      await expect(controller.continue({ agentId: "agent-a", path: OLD_PATH }, paseo as never)).rejects.toThrow(
+        "No handoff is ready",
+      );
+      expect(created).toEqual([]);
+      await controller.dispose();
+    });
   });
 
   it("schedules the handoff after the configured idle delay", async () => {
@@ -1362,3 +1425,281 @@ describe("BatonController", () => {
   });
 
 });
+
+describe("context threshold state through the controller", () => {
+  const CONTEXT_FILE = resolveContextStateFile(DATA_DIR);
+
+  it("keeps a per-agent threshold across a restart", async () => {
+    const io = memoryIo();
+    const first = makeController(io);
+    first.setContextThreshold("agent-a", 40);
+    await first.dispose();
+
+    const second = makeController(io);
+    await second.contextStateReady();
+    expect(second.thresholdOverride("agent-a")).toBe(40);
+    await second.dispose();
+  });
+
+  it("refuses a threshold outside the allowed percents", () => {
+    const controller = makeController(memoryIo());
+    expect(() => controller.setContextThreshold("agent-a", 9)).toThrow(RangeError);
+    expect(controller.thresholdOverride("agent-a")).toBeUndefined();
+  });
+
+  it("starts a new context for a created interactive session, and not for resume or history", () => {
+    const controller = makeController(memoryIo());
+    controller.onSessionOpened("agent-a", "create", "interactive");
+    controller.onSessionOpened("agent-a", "resume", "interactive");
+    controller.onSessionOpened("agent-a", "create", "history");
+    expect(controller.contextGeneration("agent-a")).toBe(1);
+    controller.onSessionOpened("agent-a", "import", "interactive");
+    expect(controller.contextGeneration("agent-a")).toBe(2);
+  });
+
+  it("does not start a new context on an ordinary turn", async () => {
+    const controller = makeController(memoryIo());
+    const { paseo } = stubPaseo();
+    controller.onTurnStarted({ id: "agent-a" });
+    await controller.onTurnEnded(
+      { id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
+      [],
+      paseo as never,
+    );
+    expect(controller.contextGeneration("agent-a")).toBe(0);
+    await controller.dispose();
+  });
+
+  it("clears an archived agent's threshold and context count, on disk as well", async () => {
+    const io = memoryIo();
+    const controller = makeController(io);
+    controller.setContextThreshold("agent-a", 40);
+    controller.onSessionOpened("agent-a", "create", "interactive");
+    controller.onArchived({ id: "agent-a" });
+    await controller.dispose();
+
+    const reloaded = makeController(io);
+    await reloaded.contextStateReady();
+    expect(reloaded.thresholdOverride("agent-a")).toBeUndefined();
+    expect(reloaded.contextGeneration("agent-a")).toBe(0);
+    await reloaded.dispose();
+  });
+
+  it("does not overwrite a context file it could not read, and writes once it can read it again", async () => {
+    const original = JSON.stringify({ agents: { "old-agent": { contextGeneration: 2 } } });
+    const io = memoryIo({ [CONTEXT_FILE]: original });
+    const baseRead = io.readFile;
+    let unreadable = true;
+    io.readFile = async (file) => {
+      if (unreadable && file === CONTEXT_FILE) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      return baseRead(file);
+    };
+
+    const controller = makeController(io);
+    controller.setContextThreshold("agent-a", 40);
+    await controller.dispose();
+    expect(io.files.get(CONTEXT_FILE)).toBe(original);
+
+    unreadable = false;
+    controller.setContextThreshold("agent-b", 50);
+    await controller.dispose();
+    const saved = JSON.parse(io.files.get(CONTEXT_FILE) ?? "{}");
+    expect(saved.agents).toMatchObject({
+      "old-agent": { contextGeneration: 2 },
+      "agent-a": { thresholdPercent: 40 },
+      "agent-b": { thresholdPercent: 50 },
+    });
+  });
+
+  it("moves an unparseable context file aside before writing a new one", async () => {
+    const io = memoryIo({ [CONTEXT_FILE]: "{not json" });
+    const controller = makeController(io);
+    controller.setContextThreshold("agent-a", 40);
+    await controller.dispose();
+    expect(io.files.get(`${CONTEXT_FILE}.corrupt`)).toBe("{not json");
+    const saved = JSON.parse(io.files.get(CONTEXT_FILE) ?? "{}");
+    expect(saved.agents["agent-a"].thresholdPercent).toBe(40);
+  });
+});
+
+describe("context threshold check", () => {
+  const parent = { id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null };
+  const above = { contextWindowUsedTokens: 610_000, contextWindowMaxTokens: 1_000_000 };
+  const below = { contextWindowUsedTokens: 500_000, contextWindowMaxTokens: 1_000_000 };
+
+  it("triggers on usage above the threshold and not below it", async () => {
+    const io = memoryIo();
+    const controller = makeController(io);
+    const stub = stubPaseo({ usage: below });
+    expect((await controller.checkThreshold(parent as never, stub.paseo as never)).triggered).toBe(false);
+    const stub2 = stubPaseo({ usage: above });
+    expect((await controller.checkThreshold(parent as never, stub2.paseo as never)).percent).toBe(61);
+    await controller.dispose();
+  });
+
+  it("fires once per context; a new session re-arms it", async () => {
+    const io = memoryIo();
+    const controller = makeController(io);
+    const stub = stubPaseo({ usage: above });
+    const first = await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(first.triggered).toBe(true);
+    expect(first.percent).toBe(61);
+    const second = await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(second.triggered).toBe(false);
+    controller.onSessionOpened("agent-a", "create", "interactive");
+    const third = await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(third.triggered).toBe(true);
+    await controller.dispose();
+  });
+
+  it("does not write or open anything without a click", async () => {
+    const io = memoryIo();
+    const controller = makeController(io);
+    const stub = stubPaseo({ usage: above });
+    // The row is the prompt; listing the timeline after the check shows one
+    // appended threshold row and no handoff file, no created agent.
+    const places: string[] = [];
+    stub.paseo.agents.ref("agent-a").timeline = {
+      refetch: async () => ({ entries: [] }),
+      append: async (item: Record<string, unknown>) => {
+        places.push(`append:${(item as { kind?: string }).kind}`);
+        return { seq: 1, epoch: "e" };
+      },
+    };
+    const result = await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(result.triggered).toBe(true);
+    const saved = JSON.parse(io.files.get(STATE_FILE) ?? "{}");
+    expect(saved["agent-a"]).toBeUndefined();
+    expect(stub.created).toEqual([]);
+    await controller.dispose();
+  });
+
+  it("triggers on the fallback when no maximum is reported", async () => {
+    const controller = makeController(memoryIo());
+    const stub = stubPaseo({ usage: { contextWindowUsedTokens: 130_000 } });
+    const result = await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(result.percent).toBeCloseTo(108.33, 1);
+    expect(result.triggered).toBe(true);
+    await controller.dispose();
+  });
+
+  it("ignores a per-agent percentage when no maximum is reported", async () => {
+    // With the 40% override honoured, 60,000 tokens would trigger (48,000 is the line). The global 60% line is 72,000.
+    const controller = makeController(memoryIo());
+    controller.setContextThreshold("agent-a", 40);
+    const stub = stubPaseo({ usage: { contextWindowUsedTokens: 60_000 } });
+    const result = await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(result.triggered).toBe(false);
+    await controller.dispose();
+  });
+
+  it("records the last percent for the chip", async () => {
+    const controller = makeController(memoryIo());
+    const stub = stubPaseo({ usage: { contextWindowUsedTokens: 62_000, contextWindowMaxTokens: 100_000 } });
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    const woke = await controller.wake(stub.paseo as never, ["wks-a"]);
+    expect(woke.contextPercents["agent-a"]).toBe(62);
+    await controller.dispose();
+  });
+
+  it("keeps the idle handoff when the threshold prompt was shown but not acted on", async () => {
+    const io = memoryIo();
+    const controller = makeController(io);
+    const stub = stubPaseo({ usage: above });
+    const fired = await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(fired.triggered).toBe(true);
+    // No handoff file was written, so the idle path must still schedule one.
+    await controller.onTurnEnded(parent as never, [], stub.paseo as never);
+    await controller.dispose();
+    const state = JSON.parse(io.files.get(STATE_FILE) ?? "{}");
+    expect(state["agent-a"]?.status).toBe("pending");
+  });
+
+
+  // The writer agent never replies in these tests, so the fallback timeout writes the handoff mechanically.
+  async function writtenByFallback(controller: BatonController, agentId: string, paseo: unknown, continueAfter: boolean) {
+    const result = await controller.createThresholdHandoff({ agentId, continue: continueAfter }, paseo as never);
+    await vi.advanceTimersByTimeAsync(HANDOFF_FALLBACK_TIMEOUT_MS + 1_000);
+    return result;
+  }
+
+  it("Create handoff writes the file and opens no agent", async () => {
+    vi.useFakeTimers();
+    try {
+      const io = memoryIo();
+      const controller = makeController(io);
+      const stub = stubPaseo({ usage: { contextWindowUsedTokens: 610_000, contextWindowMaxTokens: 1_000_000 } });
+      const result = await writtenByFallback(controller, "agent-a", stub.paseo, false);
+      expect(result.started).toBe(true);
+      expect([...io.files.keys()].some((file) => file.endsWith(".md"))).toBe(true);
+      expect(stub.created.filter((options) => options.title !== BATON_WRITER_TITLE)).toHaveLength(0);
+      await controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Create and continue opens the new agent once the handoff is written", async () => {
+    vi.useFakeTimers();
+    try {
+      const io = memoryIo();
+      const controller = makeController(io);
+      const stub = stubPaseo({ usage: { contextWindowUsedTokens: 610_000, contextWindowMaxTokens: 1_000_000 } });
+      const result = await writtenByFallback(controller, "agent-a", stub.paseo, true);
+      expect(result.started).toBe(true);
+      expect(stub.created.filter((options) => options.title !== BATON_WRITER_TITLE)).toHaveLength(1);
+      // Continue starts the new agent's own context, so its threshold can fire again.
+      expect(controller.contextGeneration("agent-continued")).toBe(1);
+      await controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("skips the idle handoff once a handoff file was written for the context", async () => {
+    vi.useFakeTimers();
+    try {
+      const io = memoryIo();
+      const controller = makeController(io);
+      const stub = stubPaseo({ usage: { contextWindowUsedTokens: 610_000, contextWindowMaxTokens: 1_000_000 } });
+      await writtenByFallback(controller, "agent-a", stub.paseo, false);
+      await controller.onTurnEnded(parent as never, [], stub.paseo as never);
+      await controller.dispose();
+      const state = JSON.parse(io.files.get(STATE_FILE) ?? "{}");
+      expect(state["agent-a"]?.status).toBe("done");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears a per-agent threshold when set to null", () => {
+    const controller = makeController(memoryIo());
+    controller.setContextThreshold("agent-a", 40);
+    controller.setContextThreshold("agent-a", null);
+    expect(controller.thresholdOverride("agent-a")).toBeUndefined();
+  });
+
+  it("shows the chip for an agent whose prompts are gated by an ignored workspace", async () => {
+    const controller = makeController(memoryIo(), { settings: settings({ ignoredWorkspaceIds: ["wks-a"] }) });
+    const stub = stubPaseo({ usage: { contextWindowUsedTokens: 62_000, contextWindowMaxTokens: 100_000 } });
+    const result = await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(result.triggered).toBe(false);
+    const woke = await controller.wake(stub.paseo as never, []);
+    expect(woke.contextPercents["agent-a"]).toBe(62);
+    await controller.dispose();
+  });
+
+  it("keeps the last chip percentage across a restart, for an agent with no entry", async () => {
+    const io = memoryIo();
+    const first = makeController(io);
+    const stub = stubPaseo({ usage: { contextWindowUsedTokens: 62_000, contextWindowMaxTokens: 100_000 } });
+    await first.checkThreshold(parent as never, stub.paseo as never);
+    await first.dispose();
+    const second = makeController(io);
+    await second.contextStateReady();
+    const woke = await second.wake(stub.paseo as never, []);
+    expect(woke.contextPercents["agent-a"]).toBe(62);
+    await second.dispose();
+  });
+});
+

@@ -2,7 +2,7 @@ import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { attachBatonTools } from "./server/agent-tools";
 import { BatonController } from "./server/controller";
 import { resolveDaemonHome, resolveDataDir } from "./server/paths";
-import { batonSettings, archiveAgentRpc, continueHandoffRpc, createNowRpc, openHandoffRpc, readHandoffRpc, setEnabledRpc, wakeRpc } from "./shared/baton";
+import { batonSettings, archiveAgentRpc, continueHandoffRpc, createNowRpc, createThresholdHandoffRpc, getContextThresholdRpc, openHandoffRpc, readHandoffRpc, setContextThresholdRpc, setEnabledRpc, wakeRpc } from "./shared/baton";
 
 export default function contribute(server: PluginServerContext) {
   const dataDir = resolveDataDir(resolveDaemonHome());
@@ -13,9 +13,10 @@ export default function contribute(server: PluginServerContext) {
     log: (message) => console.log(`[baton] ${message}`),
   });
 
-  server.addHook("agent.open.before", async ({ request }) =>
-    attachBatonTools(request, () => controller.readSettings()),
-  );
+  server.addHook("agent.open.before", async ({ request }) => {
+    controller.onSessionOpened(request.agentId, request.reason, request.purpose);
+    return attachBatonTools(request, () => controller.readSettings());
+  });
 
   server.addHook("agent.turn.before", async (event) => {
     controller.onTurnStarted(event.agent);
@@ -51,12 +52,18 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(setEnabledRpc, (input, context) => controller.setEnabled(input, context.paseo));
 
+  server.handle(setContextThresholdRpc, (input) => controller.setContextThreshold(input.agentId, input.percent));
+
+  server.handle(getContextThresholdRpc, (input) => controller.getContextThreshold(input.agentId));
+
+  server.handle(createThresholdHandoffRpc, (input, context) => controller.createThresholdHandoff(input, context.paseo));
+
   server.handle(wakeRpc, async (input, context) => {
     try {
       return await controller.wake(context.paseo, input.workspaceIds);
     } catch (error: unknown) {
       console.error(`[baton] wake failed: ${String(error)}`);
-      return { recovered: false, handoffs: [], disabledAgentIds: [], writingAgentIds: [], ignoredWorkspaces: {} };
+      return { recovered: false, handoffs: [], disabledAgentIds: [], writingAgentIds: [], ignoredWorkspaces: {}, contextPercents: {} };
     }
   });
 

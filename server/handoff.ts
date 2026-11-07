@@ -1,3 +1,22 @@
+/** Set before a continue prompt's handoff text. Drafts leave the text out, since the file is read on its own. */
+export const CONTINUE_BODY_MARK = "\n\n<handoff>\n";
+/** The opening words of a continue prompt, before the handoff path. Timeline reading matches them to find the file. */
+export const CONTINUE_LEAD = "This session continues the handoff saved at";
+
+/**
+ * The first message of a session started from a handoff. The text is inline, because a long file can come back
+ * from a read cut short, which made a fresh session see an empty handoff. The first sentence names the file.
+ */
+export function buildContinuePrompt(handoffPath: string, text: string): string {
+  return [
+    `${CONTINUE_LEAD} ${handoffPath}. Its full text is below, so there is no need to read the file.`,
+    `${CONTINUE_BODY_MARK.trimStart()}${text.trimEnd()}`,
+    "</handoff>",
+    "",
+    "Continue the task it describes.",
+  ].join("\n\n");
+}
+
 export function buildWriterHandoffPrompt(draft: string): string {
   return [
     "Write a handoff document so a fresh agent can continue the task described below without asking the original agent anything.",
