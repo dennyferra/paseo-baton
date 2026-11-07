@@ -1,6 +1,6 @@
-import type { PaseoApi, PaseoAgent } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import type { PluginSettings } from "@getpaseo/plugin/server";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { PluginHandlerContext, PluginSettings } from "@getpaseo/plugin/server";
 import { execFile } from "node:child_process";
 import path, { dirname } from "node:path";
 import { promisify } from "node:util";
@@ -37,6 +37,10 @@ import { gatherRepoFacts } from "./repo-facts";
 import { isMissing, loadState, nodeStoreIo, saveState, type BatonStoreIo } from "./store";
 import { previousHandoffPath, renderMechanicalHandoff } from "./timeline-summary";
 
+// Paseo's plugin build rejects type imports from @getpaseo/client on a registry or
+// Git install (it is not a declared dependency), so take both types from the SDK.
+type PaseoApi = PluginHandlerContext["paseo"];
+type PaseoAgent = AgentSnapshotPayload;
 type AgentStatus = NonNullable<PaseoAgent["status"]>;
 type RowData = {
   agentId: string;

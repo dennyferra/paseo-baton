@@ -1,6 +1,5 @@
 import { useSettings, usePaseo, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { SettingsCard, SettingsInput, SettingsSwitch, useToast } from "@getpaseo/plugin/client/ui";
-import type { PaseoApi } from "@getpaseo/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import type { BatonSettings } from "../shared/baton";
@@ -42,6 +41,9 @@ function describeDetail(level: DetailLevel): string {
   return `Up to about ${Math.round(limits.maxChars / 1000)}k characters of conversation, ${limits.historyEntries} history entries. ${DETAIL_INFO[level].note}`;
 }
 
+// Paseo's plugin build rejects type imports from @getpaseo/client on a registry or
+// Git install, so name the API type through the SDK hook instead.
+type PaseoApi = ReturnType<typeof usePaseo>;
 type ProviderSnapshot = Awaited<ReturnType<PaseoApi["providers"]["snapshot"]>>;
 type DaemonProfile = NonNullable<Awaited<ReturnType<PaseoApi["config"]["get"]>>["config"]["agentProfiles"]>[number];
 
