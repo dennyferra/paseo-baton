@@ -71,9 +71,9 @@ export function visibleRequest(text: string): string {
   return (cut >= 0 ? text.slice(0, cut) : text).trim();
 }
 
-/** The handoff file a session was started from, when its first message is Baton's continue prompt. */
 const CONTINUE_PATH_PATTERN = new RegExp(`^${CONTINUE_LEAD}\\s+(\\S+\\.md)\\.`);
 
+/** The handoff file a session was started from, when its first message is Baton's continue prompt. */
 export function previousHandoffPath(timeline: readonly AgentTimelineItem[]): string | null {
   const first = visibleRequest(firstUserText(timeline) ?? "");
   const match =

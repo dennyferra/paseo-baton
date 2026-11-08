@@ -157,6 +157,8 @@ export const batonRowSchema = z.object({
   savedAt: z.number().optional(),
   /** Set on the threshold prompt row: the percent the context was at. */
   usedPercent: z.number().optional(),
+  /** Set on the threshold row once the user has acted on its prompt. Its buttons stay hidden until the write fails. */
+  handled: z.boolean().optional(),
 });
 export type BatonRowData = z.infer<typeof batonRowSchema>;
 
@@ -259,5 +261,5 @@ export const getContextThresholdRpc = defineRpc({
 export const createThresholdHandoffRpc = defineRpc({
   name: "baton.create-threshold-handoff",
   input: z.object({ agentId: z.string(), continue: z.boolean() }),
-  output: z.object({ started: z.boolean(), agentId: z.string().optional() }),
+  output: z.object({ started: z.boolean() }),
 });

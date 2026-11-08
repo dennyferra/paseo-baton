@@ -27,7 +27,7 @@ Its menu once a handoff exists, with turning handoffs off disabled:
   starting its next handoff archives the earlier one, and Paseo archives the rest with the idle agent.
   The idle agent's own chat only gains a "Handoff saved" row. If the writer fails or saves nothing usable,
   Baton falls back to a mechanical summary of the conversation, with no model call.
-- **What the writer sees.** The first request, your messages and the agent's replies, the files it
+- **What the writer sees.** The first request (heartbeat and agent messages count too), your messages and the agent's replies, the files it
   touched, its recent tool calls that name a file or URL, its latest task list and plan, errors and failed
   shell programs (never command lines), sub-agent work, the repo state from `git`, and, when the session was
   started with **Continue from handoff**, the handoff it came from. How much of that depends on the
@@ -38,7 +38,9 @@ Its menu once a handoff exists, with turning handoffs off disabled:
   button to open the file in your default app.
   - **Baton chip.** Every agent gets a **Baton** chip in the composer with a menu:
     - **Continue from handoff** starts a new agent titled `[Handoff] <task>` in the same workspace
-      and opens it. The "Handoff saved" row in the chat has the same link for a handoff nobody has continued.
+      and opens it. Its first message carries the full handoff text. The "Handoff saved" row in the chat has the same
+      link for a handoff nobody has continued. A finished handoff also stays when Paseo closes the agent's idle runtime,
+      so Continue still works.
     - **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
       available only for an idle session with no handoff yet and with handoffs turned on.
     - **Turn off / Turn on handoff for this session** pauses Baton for one agent. It is saved across

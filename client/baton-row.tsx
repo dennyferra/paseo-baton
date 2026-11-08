@@ -1,5 +1,5 @@
 import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { z } from "zod";
 import { batonRowSchema } from "../shared/baton";
@@ -30,11 +30,29 @@ export function setCreateThresholdHandoff(create: (agentId: string, continueAfte
   createThresholdHandoff = create;
 }
 
+let openAgent: ((agentId: string) => Promise<unknown>) | null = null;
+
+export function setOpenAgent(open: (agentId: string) => Promise<unknown>): void {
+  openAgent = open;
+}
+
 export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonRowData>) {
   const data = item.data;
   const [archiving, setArchiving] = useState(false);
   const [continuing, setContinuing] = useState(false);
   const [creating, setCreating] = useState<null | "create" | "continue">(null);
+  // Set by this row's own "Create and continue". The new agent opens when the row reports it, and only then, so a
+  // row that is merely re-read later does not open anything.
+  const awaitingContinue = useRef(false);
+  useEffect(() => {
+    if (!awaitingContinue.current || !data.continuedAgentId) return;
+    awaitingContinue.current = false;
+    if (openAgent) {
+      void openAgent(data.continuedAgentId).catch((error: unknown) => {
+        console.error(`[baton] opening the continued agent failed: ${String(error)}`);
+      });
+    }
+  }, [data.continuedAgentId]);
   const styles = useMemo(
     () => ({
       card: {
@@ -73,8 +91,11 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
       <Text style={styles.title}>
         {data.usedPercent !== undefined ? `Handoff (${Math.round(data.usedPercent)}% full)` : "Handoff saved"}
       </Text>
-      {data.usedPercent !== undefined ? (
+      {data.usedPercent !== undefined && !data.handled && !data.continuedAgentId ? (
         <Text style={styles.hint}>This context is {Math.round(data.usedPercent)}% full. Create a handoff to continue in a fresh session.</Text>
+      ) : null}
+      {data.handled && !data.continuedAgentId ? (
+        <Text style={styles.hint}>Handoff requested. It appears below when it is saved.</Text>
       ) : null}
       {data.path !== undefined ? (
         <Pressable
@@ -91,7 +112,7 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
           </Text>
         </Pressable>
       ) : null}
-      {data.usedPercent !== undefined && !data.continuedAgentId ? (
+      {data.usedPercent !== undefined && !data.continuedAgentId && !data.handled ? (
         <View style={{ flexDirection: "row", gap: layout.compact ? 6 : 8 }}>
           <Pressable
             accessibilityRole="button"
@@ -100,10 +121,12 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
             onPress={() => {
               if (!createThresholdHandoff || creating !== null) return;
               setCreating("create");
-              void createThresholdHandoff(data.agentId, false).catch((error: unknown) => {
-                setCreating(null);
-                console.error(`[baton] create handoff failed: ${String(error)}`);
-              });
+              void createThresholdHandoff(data.agentId, false)
+                .then(() => setCreating(null))
+                .catch((error: unknown) => {
+                  setCreating(null);
+                  console.error(`[baton] create handoff failed: ${String(error)}`);
+                });
             }}
           >
             <Text style={styles.path}>{creating === "create" ? "Creating..." : "Create handoff"}</Text>
@@ -115,10 +138,14 @@ export function BatonRow({ item, theme, layout }: PluginTimelineItemProps<BatonR
             onPress={() => {
               if (!createThresholdHandoff || creating !== null) return;
               setCreating("continue");
-              void createThresholdHandoff(data.agentId, true).catch((error: unknown) => {
-                setCreating(null);
-                console.error(`[baton] create and continue failed: ${String(error)}`);
-              });
+              awaitingContinue.current = true;
+              void createThresholdHandoff(data.agentId, true)
+                .then(() => setCreating(null))
+                .catch((error: unknown) => {
+                  awaitingContinue.current = false;
+                  setCreating(null);
+                  console.error(`[baton] create and continue failed: ${String(error)}`);
+                });
             }}
           >
             <Text style={styles.path}>{creating === "continue" ? "Continuing..." : "Create and continue"}</Text>

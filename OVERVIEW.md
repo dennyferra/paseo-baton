@@ -22,7 +22,7 @@ view of the handoff for review, with a button to open the file in your default a
 chip in the composer that opens a menu:
 
 - **Continue from handoff** (only when a handoff exists) creates a new agent in the same workspace
-  titled `[Handoff] <short title>` (a short summary the writer adds so you can recall the work later) with the prompt to read the file and continue the task. The row in the original tab updates
+  titled `[Handoff] <short title>` (a short summary the writer adds so you can recall the work later) whose first message carries the full handoff text, so the new agent starts with the context it needs. The row in the original tab updates
   to say which tab it was continued on, with an **Archive this tab** link. The "Handoff saved" row also has a
   **Continue from this handoff** link for a handoff nobody has continued yet, even when Baton no longer tracks it.
 - **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
@@ -82,6 +82,8 @@ Settings live under Settings -> Plugins -> Baton. Changes are saved automaticall
   relative to the workspace. Files are named `<agentId>.md`. Existing handoffs keep their saved path.
   If the location can't be used, Baton saves to the default folder instead and the "Handoff saved" row
   says why.
+- **Kept when the runtime closes.** When Paseo closes an idle agent's runtime to save resources, a finished
+  handoff stays, so Continue still works.
 - **Delete unused handoffs when a session resumes** (`deleteStaleHandoffs`, default on): removes a
   handoff file that nobody continued once you keep working in the original session. Turn it off to
   keep every file. The chat row still opens it and Continue still works, because the row names the file.
@@ -104,7 +106,7 @@ Settings live under Settings -> Plugins -> Baton. Changes are saved automaticall
 Writing a handoff sends part of the conversation to an agent provider. The writer agent receives a draft that
 Baton builds from the agent's conversation, which it reads back from Paseo when it writes the handoff:
 
-- the first request, the user's messages and the agent's replies (long ones keep their start and end, within the
+- the first request (heartbeat and agent messages count too), the user's messages and the agent's replies (long ones keep their start and end, within the
   size set by Conversation detail, with the oldest dropped first);
 - the files the agent touched, and a short list of its recent tool calls that name a file, URL or label
   (repeats are counted, and shell commands are left out);

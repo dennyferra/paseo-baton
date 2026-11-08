@@ -63,7 +63,15 @@ export default function contribute(server: PluginServerContext) {
       return await controller.wake(context.paseo, input.workspaceIds);
     } catch (error: unknown) {
       console.error(`[baton] wake failed: ${String(error)}`);
-      return { recovered: false, handoffs: [], disabledAgentIds: [], writingAgentIds: [], ignoredWorkspaces: {}, contextPercents: {} };
+      return {
+        recovered: false,
+        handoffs: [],
+        disabledAgentIds: [],
+        writingAgentIds: [],
+        ignoredWorkspaces: {},
+        contextPercents: {},
+        contextLimits: {},
+      };
     }
   });
 

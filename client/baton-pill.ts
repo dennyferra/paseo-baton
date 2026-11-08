@@ -28,7 +28,6 @@ export interface BatonPillsDeps {
 }
 
 export interface BatonPillsHandle {
-  registerHandoff(info: BatonHandoffInfo): void;
   refresh(): Promise<void>;
   dispose(): void;
 }
@@ -357,9 +356,6 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
     });
 
   return {
-    registerHandoff(info: BatonHandoffInfo): void {
-      registerPill(info);
-    },
     refresh,
     dispose(): void {
       controller.abort();

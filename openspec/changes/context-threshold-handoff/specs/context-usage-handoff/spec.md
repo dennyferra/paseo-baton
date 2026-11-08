@@ -15,14 +15,14 @@ Baton SHALL provide a global context threshold setting, a whole percentage from 
 - **WHEN** no threshold has been set in plugin settings
 - **THEN** the effective threshold is 60 percent
 
-#### Scenario: Out-of-range value rejected
+#### Scenario: Out-of-range value clamped
 
-- **WHEN** a user saves a threshold below 10 or above 95
-- **THEN** the setting is not saved and the previous value remains in effect
+- **WHEN** a user types a threshold below 10 or above 95 on the settings screen
+- **THEN** the value is clamped to 10 or 95 and that value is saved
 
 ### Requirement: Per-agent threshold override
 
-Baton SHALL let a user set a percentage threshold for one agent from that agent's Baton menu. A per-agent threshold SHALL take precedence over the global threshold for that agent only.
+Baton SHALL let a user set a percentage threshold for one agent from that agent's Baton menu, choosing from 20% to 90% in steps of 10%. A per-agent threshold SHALL take precedence over the global threshold for that agent only.
 
 #### Scenario: Override applies to one agent
 
@@ -57,7 +57,7 @@ Baton SHALL NOT trigger the threshold prompt for subagents, handoff writer agent
 
 ### Requirement: Threshold prompt offers two actions
 
-When the threshold triggers, Baton SHALL show the existing handoff message with two actions: "Create handoff" and "Create and continue". Baton SHALL NOT write a handoff or open a new agent until the user clicks one of these actions.
+When the threshold triggers, Baton SHALL show a threshold row, titled with the percentage used, with two actions: "Create handoff" and "Create and continue". Baton SHALL NOT write a handoff or open a new agent until the user clicks one of these actions. Once a handoff file exists for the context, Baton SHALL NOT offer the prompt, and a turn that ends while the handoff is being written SHALL NOT offer it either.
 
 #### Scenario: Create handoff only
 
@@ -67,7 +67,7 @@ When the threshold triggers, Baton SHALL show the existing handoff message with 
 #### Scenario: Create and continue
 
 - **WHEN** the user clicks "Create and continue" on the threshold prompt
-- **THEN** Baton writes the handoff file and opens a new Paseo agent through the existing Continue action
+- **THEN** Baton writes the handoff file, then continues it into a new Paseo agent. The new agent opens in the app if the threshold row is still on screen, and the row links to it either way
 
 #### Scenario: Writer takes longer than a click
 

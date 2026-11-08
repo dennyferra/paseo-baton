@@ -1,6 +1,13 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { createBatonPills } from "./client/baton-pill";
-import { BatonRow, setArchiveAgent, setContinueHandoff, setCreateThresholdHandoff, setOpenHandoff } from "./client/baton-row";
+import {
+  BatonRow,
+  setArchiveAgent,
+  setContinueHandoff,
+  setCreateThresholdHandoff,
+  setOpenAgent,
+  setOpenHandoff,
+} from "./client/baton-row";
 import { HANDOFF_VIEW_SCREEN_ID, HandoffViewScreen } from "./client/handoff-view";
 import { OPEN_AGENT_SCREEN_ID, OpenAgentScreen } from "./client/open-agent";
 import { BatonSettingsScreen } from "./client/settings";
@@ -46,13 +53,14 @@ export default function contribute(client: PluginClientContext) {
     }),
   );
 
-  setCreateThresholdHandoff((agentId, cont) =>
-    client.rpc(createThresholdHandoffRpc, { agentId, continue: cont }).then((result) => {
-      if (result.agentId) {
-        client.openScreen({ screenId: OPEN_AGENT_SCREEN_ID, params: { agentId: result.agentId } });
-      }
-    }),
+  setCreateThresholdHandoff((agentId, shouldContinue) =>
+    client.rpc(createThresholdHandoffRpc, { agentId, continue: shouldContinue }).then(() => undefined),
   );
+
+  setOpenAgent((agentId) => {
+    client.openScreen({ screenId: OPEN_AGENT_SCREEN_ID, params: { agentId } });
+    return Promise.resolve();
+  });
 
   const pills = createBatonPills({ client });
 

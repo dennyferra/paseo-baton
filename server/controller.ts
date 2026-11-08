@@ -52,6 +52,9 @@ type AgentStatus = NonNullable<PaseoAgent["status"]>;
 type BatonHandoffInfo = HandoffInfo;
 type TurnAgent = { id: string; workspaceId: string | null; cwd: string; parentAgentId: string | null };
 
+/** The fields a threshold row gains once the user acts on its prompt. */
+type ThresholdRowFields = { handled?: boolean; continuedAgentId?: string };
+
 export interface BatonControllerDeps {
   dataDir: string;
   settings: PluginSettings<typeof batonSettingsSchema>;
@@ -155,9 +158,8 @@ export class BatonController {
   private writeQueue: Promise<void> = Promise.resolve();
   /** Per-agent threshold overrides and context counters, kept in their own file beside the handoff state. */
   private readonly contextState: ContextStateStore;
-  /** Agents seen with usage this run, so the chip can find their persisted percent. */
-  /** Agents whose "Create and continue" is waiting for their handoff to be written. */
-  private readonly continueAfterWrite = new Set<string>();
+  /** Threshold prompts the user acted on, by agent: whether to continue once the handoff is written. */
+  private readonly thresholdRequests = new Map<string, { continue: boolean }>();
 
   constructor(deps: BatonControllerDeps) {
     this.dataDir = deps.dataDir;
@@ -205,6 +207,8 @@ export class BatonController {
     if (timeline.length > 0) this.lastTimeline.set(agent.id, { items: timeline, cut: false });
     else this.lastTimeline.delete(agent.id);
     if (this.pendingHandoff.has(agent.id)) {
+      // The chip still updates, but no prompt while this agent's handoff is being written.
+      await this.checkThreshold(agent, paseo, { prompt: false });
       await this.finalizeHandoff(agent.id, paseo);
       return;
     }
@@ -226,7 +230,11 @@ export class BatonController {
    * context, the threshold prompt is offered. The chip always updates; the
    * prompt never fires on its own. Subagents and writers are skipped.
    */
-  async checkThreshold(agent: TurnAgent, paseo: PaseoApi): Promise<{ triggered: boolean; percent: number | null }> {
+  async checkThreshold(
+    agent: TurnAgent,
+    paseo: PaseoApi,
+    options: { prompt: boolean } = { prompt: true },
+  ): Promise<{ triggered: boolean; percent: number | null }> {
     const usage = await this.readUsage(agent.id, paseo);
     if (usage === null) return { triggered: false, percent: null };
 
@@ -236,6 +244,7 @@ export class BatonController {
     // The chip tracks every agent that reports usage, including agents that never get a prompt.
     this.contextState.setLastPercent(agent.id, percent ?? 0, usage.maxTokens);
     if (percent === null) return { triggered: false, percent: null };
+    if (!options.prompt) return { triggered: false, percent };
     if (!(await this.trackedScope(agent, paseo, settings))) return { triggered: false, percent };
 
     // Without a reported maximum the per-agent percentage is ignored: the
@@ -244,13 +253,15 @@ export class BatonController {
       usage.maxTokens === undefined
         ? settings.contextThresholdPercent
         : (this.contextState.thresholdOverride(agent.id) ?? settings.contextThresholdPercent);
-    if (this.contextState.hasFiredForContext(agent.id)) return { triggered: false, percent };
+    // A handoff already written for this context makes a prompt useless: "Create handoff" would refuse.
+    if (this.contextState.hasFiredForContext(agent.id) || this.contextState.hasHandoffForContext(agent.id)) {
+      return { triggered: false, percent };
+    }
     if (!reachesThreshold(usage, effectivePercent, fallbackTokens)) return { triggered: false, percent };
     this.contextState.markThresholdFired(agent.id);
-    // The prompt reuses the existing handoff row: a threshold row names the
-    // agent and carries two actions until the user clicks one of them. The
-    // row is only a prompt; no file is written and no agent is opened here.
-    await this.appendThresholdRow(agent.id, paseo, percent);
+    // The prompt is a threshold row with two actions until the user clicks one. No file is written and no agent is
+    // opened here.
+    await this.writeThresholdRow(agent.id);
     return { triggered: true, percent };
   }
 
@@ -284,22 +295,24 @@ export class BatonController {
   }
 
   /**
-   * The existing handoff row at the threshold: it names the agent and offers
-   * "Create handoff" and "Create and continue". A user act on one of its
-   * actions goes through createThresholdHandoff. Nothing is written here.
+   * Writes the agent's threshold row. It carries no path, since no handoff file exists until the user acts on it. The
+   * prompt is the row with no fields; once the user acts, the row is rewritten with `handled`, and with `continuedAgentId`
+   * when a new agent was opened.
    */
-  private async appendThresholdRow(agentId: string, paseo: PaseoApi, percent: number): Promise<void> {
+  private async writeThresholdRow(agentId: string, fields: ThresholdRowFields = {}): Promise<void> {
+    const paseo = this.paseo;
+    if (!paseo) return;
+    const usedPercent = this.contextState.lastPercent(agentId) ?? 0;
     try {
-      // No path: the handoff file does not exist until the user clicks an action.
       await paseo.agents.ref(agentId).timeline.append({
         type: "plugin",
         id: `baton-threshold:${agentId}`,
         kind: "baton-ready",
         version: 1,
-        data: { agentId, usedPercent: percent, savedAt: this.now() },
+        data: { agentId, usedPercent, savedAt: this.now(), ...fields },
       });
     } catch (error: unknown) {
-      this.log(`Appending threshold row for ${agentId} failed: ${String(error)}`);
+      this.log(`Writing threshold row for ${agentId} failed: ${String(error)}`);
     }
   }
 
@@ -583,16 +596,17 @@ export class BatonController {
   async createThresholdHandoff(
     input: { agentId: string; continue: boolean },
     paseo: PaseoApi,
-  ): Promise<{ started: boolean; agentId?: string }> {
+  ): Promise<{ started: boolean }> {
     this.setPaseo(paseo);
     await this.ensureRecovered(paseo);
     const result = await this.createNow({ agentId: input.agentId }, paseo);
-    if (!input.continue || !result.started) return result;
-    // The writer can take minutes, so the continue is not awaited here. It
-    // runs once the handoff is written and its row is in the timeline.
-    this.continueAfterWrite.add(input.agentId);
+    if (!result.started) return result;
+    // The writer can take minutes, so nothing waits for it here. The row is marked handled now, which hides its
+    // buttons while the handoff is written. A failed write reopens the prompt.
+    this.thresholdRequests.set(input.agentId, { continue: input.continue });
+    await this.writeThresholdRow(input.agentId, { handled: true });
     if (this.entries.get(input.agentId)?.status === "done") {
-      await this.continueIfRequested(input.agentId, paseo);
+      await this.handleThresholdRequest(input.agentId, paseo);
     }
     return { started: true };
   }
@@ -607,16 +621,29 @@ export class BatonController {
     this.contextState.markHandoffWritten(agentId);
   }
 
-  /** Continues from a finished handoff when "Create and continue" asked for it. Consumes the request. */
-  private async continueIfRequested(agentId: string, paseo: PaseoApi): Promise<void> {
-    if (!this.continueAfterWrite.delete(agentId)) return;
+  /**
+   * Runs the rest of a threshold request once its handoff is written. "Create and continue" opens the new agent and
+   * links it from the threshold row. Consumes the request.
+   */
+  private async handleThresholdRequest(agentId: string, paseo: PaseoApi): Promise<void> {
+    const request = this.thresholdRequests.get(agentId);
+    if (!request) return;
+    this.thresholdRequests.delete(agentId);
+    if (!request.continue) return;
     const entry = this.entries.get(agentId);
     if (!entry?.path || entry.status !== "done") return;
     try {
-      await this.continue({ agentId, path: entry.path }, paseo);
+      const { agentId: newAgentId } = await this.continue({ agentId, path: entry.path }, paseo);
+      await this.writeThresholdRow(agentId, { handled: true, continuedAgentId: newAgentId });
     } catch (error: unknown) {
       this.log(`Continuing ${agentId} after its handoff was written failed: ${String(error)}`);
     }
+  }
+
+  /** Drops a threshold request whose handoff will not be written, and reopens its prompt. */
+  private cancelThresholdRequest(agentId: string): void {
+    if (!this.thresholdRequests.delete(agentId)) return;
+    void this.writeThresholdRow(agentId, { handled: false });
   }
 
   contextGeneration(agentId: string): number {
@@ -1057,7 +1084,7 @@ export class BatonController {
           path,
           continuedAgentId: done.continuedAgentId,
         });
-        await this.continueIfRequested(agentId, paseo);
+        await this.handleThresholdRequest(agentId, paseo);
         return;
       }
     } catch (error: unknown) {
@@ -1174,7 +1201,7 @@ export class BatonController {
       path,
       continuedAgentId: done.continuedAgentId,
     });
-    await this.continueIfRequested(agentId, paseo);
+    await this.handleThresholdRequest(agentId, paseo);
   }
 
   /**
@@ -1264,7 +1291,7 @@ export class BatonController {
           path: handoffPath,
           continuedAgentId: done.continuedAgentId,
         });
-        await this.continueIfRequested(agentId, paseo);
+        await this.handleThresholdRequest(agentId, paseo);
       })().catch((error: unknown) => {
         this.log(`Mechanical fallback for ${agentId} failed: ${String(error)}`);
       });
@@ -1282,12 +1309,13 @@ export class BatonController {
     this.clearTimer(agentId);
     this.clearFallbackTimer(agentId);
     if (this.entries.delete(agentId)) this.persistEntries();
+    this.cancelThresholdRequest(agentId);
   }
 
   private cleanupAgent(agentId: string): void {
     this.busySubagents.delete(agentId);
     this.parentOf.delete(agentId);
-    this.continueAfterWrite.delete(agentId);
+    this.thresholdRequests.delete(agentId);
     this.dropEntry(agentId);
     this.pendingHandoff.delete(agentId);
     this.lastTimeline.delete(agentId);
@@ -1329,6 +1357,7 @@ export class BatonController {
   }
 
   private markSkippedEntry(agentId: string): void {
+    this.cancelThresholdRequest(agentId);
     const entry = this.entries.get(agentId);
     if (!entry) return;
     this.entries.set(agentId, markSkipped(entry, this.now()));

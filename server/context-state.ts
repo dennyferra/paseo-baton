@@ -272,13 +272,18 @@ export function parseContextUsage(value: unknown): ContextUsage | null {
   return { usedTokens: used, maxTokens: max };
 }
 
+/** The size a percentage is measured against: the reported maximum, or the absolute fallback when none is reported. */
+export function limitTokens(usage: ContextUsage, fallbackTokens: number): number {
+  return usage.maxTokens ?? fallbackTokens;
+}
+
 /**
  * The context percentage a chip should show: of the reported maximum when it
  * exists, and of the absolute fallback otherwise. Null when no limit can be
  * named at all.
  */
 export function contextPercent(usage: ContextUsage, fallbackTokens: number): number | null {
-  const limit = usage.maxTokens ?? fallbackTokens;
+  const limit = limitTokens(usage, fallbackTokens);
   if (!limit || limit <= 0 || !Number.isFinite(limit)) return null;
   return (usage.usedTokens / limit) * 100;
 }
@@ -288,6 +293,5 @@ export function contextPercent(usage: ContextUsage, fallbackTokens: number): num
  * maximum is reported. The caller decides which percentage applies; this only compares.
  */
 export function reachesThreshold(usage: ContextUsage, thresholdPercent: number, fallbackTokens: number): boolean {
-  const limit = usage.maxTokens ?? fallbackTokens;
-  return usage.usedTokens >= (limit * thresholdPercent) / 100;
+  return usage.usedTokens >= (limitTokens(usage, fallbackTokens) * thresholdPercent) / 100;
 }

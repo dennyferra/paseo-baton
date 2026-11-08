@@ -1672,6 +1672,59 @@ describe("context threshold check", () => {
     }
   });
 
+  it("offers no threshold prompt once a handoff was written for the context", async () => {
+    vi.useFakeTimers();
+    try {
+      const io = memoryIo();
+      const controller = makeController(io);
+      const stub = stubPaseo({ usage: above });
+      await writtenByFallback(controller, "agent-a", stub.paseo, false);
+      const after = await controller.checkThreshold(parent as never, stub.paseo as never);
+      expect(after.triggered).toBe(false);
+      await controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers no threshold prompt on a turn that ends while the handoff is being written", async () => {
+    vi.useFakeTimers();
+    try {
+      const io = memoryIo();
+      const controller = makeController(io);
+      const stub = stubPaseo({ usage: above });
+      await controller.createThresholdHandoff({ agentId: "agent-a", continue: false }, stub.paseo as never);
+      const before = stub.appended.length;
+      await controller.onTurnEnded(parent as never, [], stub.paseo as never);
+      // The writer's own "Handoff saved" row may follow; a threshold prompt is the one that is neither handled nor new.
+      const prompts = stub.appended
+        .slice(before)
+        .filter((item) => item.id === "baton-threshold:agent-a" && (item.data as { handled?: boolean }).handled !== true);
+      expect(prompts).toHaveLength(0);
+      await controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("links the new agent from the threshold row once Create and continue finishes", async () => {
+    vi.useFakeTimers();
+    try {
+      const io = memoryIo();
+      const controller = makeController(io);
+      const stub = stubPaseo({ usage: above });
+      await writtenByFallback(controller, "agent-a", stub.paseo, true);
+      const links = stub.appended.filter(
+        (item) => item.id === "baton-threshold:agent-a" && (item.data as { continuedAgentId?: string }).continuedAgentId !== undefined,
+      );
+      expect(links).toHaveLength(1);
+      expect(links[0].data).toMatchObject({ continuedAgentId: "agent-continued", handled: true });
+      await controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clears a per-agent threshold when set to null", () => {
     const controller = makeController(memoryIo());
     controller.setContextThreshold("agent-a", 40);
