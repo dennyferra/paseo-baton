@@ -67,7 +67,8 @@ export function firstRequestText(timeline: readonly AgentTimelineItem[]): string
  * text is left out, since the handoff file itself is read separately as the previous handoff.
  */
 export function visibleRequest(text: string): string {
-  const cut = text.indexOf(CONTINUE_BODY_MARK);
+  // The marker sits after a blank line, which keeps a stray "<handoff>" in the user's own text from matching.
+  const cut = text.indexOf(`\n\n${CONTINUE_BODY_MARK}`);
   return (cut >= 0 ? text.slice(0, cut) : text).trim();
 }
 

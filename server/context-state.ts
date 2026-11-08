@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { contextThresholdPercentSchema, MAX_CONTEXT_THRESHOLD_PERCENT, MIN_CONTEXT_THRESHOLD_PERCENT } from "../shared/baton";
+import {
+  contextThresholdPercentSchema,
+  type ContextUsageReading,
+  MAX_CONTEXT_THRESHOLD_PERCENT,
+  MIN_CONTEXT_THRESHOLD_PERCENT,
+} from "../shared/baton";
 import { isMissing, writeJsonAtomic, type BatonStoreIo } from "./store";
 
 export type SessionOpenReason = "create" | "resume" | "refresh" | "import";
@@ -32,7 +37,7 @@ const agentStateSchema = z.object({
   contextGeneration: z.number().int().min(0),
   firedGeneration: z.number().int().min(0).optional(),
   handoffGeneration: z.number().int().min(0).optional(),
-  lastPercent: z.number().int().min(0).max(100).optional(),
+  lastPercent: z.number().int().min(0).optional(),
   lastMaxTokens: z.number().int().positive().optional(),
 });
 
@@ -101,12 +106,10 @@ export class ContextStateStore {
   private readonly ready: Promise<void>;
   /** Writes run one after another, so the newest state is always the last one saved. */
   private writeQueue: Promise<void>;
-  /**
-   * Agents cleared before the stored file finished loading. An archived agent's
-   * record is gone from memory, so only a tombstone can stop the load from
-   * resurrecting the persisted copy afterwards.
-   */
-  private readonly pendingClears = new Set<string>();
+  /** True once the stored file has been read, whether or not it could be used. */
+  private loaded = false;
+  /** Changes made before that. They run in order once the file is read, so none lands on an empty state. */
+  private deferred: Array<() => void> = [];
 
   constructor(
     private readonly io: BatonStoreIo,
@@ -132,7 +135,7 @@ export class ContextStateStore {
 
   /** Marks the threshold prompt as shown for the agent's current context. */
   markThresholdFired(agentId: string): void {
-    this.update(agentId, { firedGeneration: this.contextGeneration(agentId) });
+    this.change(() => this.update(agentId, { firedGeneration: this.contextGeneration(agentId) }));
   }
 
   /**
@@ -145,12 +148,31 @@ export class ContextStateStore {
 
   /** Marks that a handoff file was written for the agent's current context. */
   markHandoffWritten(agentId: string): void {
-    this.update(agentId, { handoffGeneration: this.contextGeneration(agentId) });
+    this.change(() => this.update(agentId, { handoffGeneration: this.contextGeneration(agentId) }));
   }
 
-  /** Every agent that has a stored context percentage, including agents with no other record. */
-  agentIdsWithPercent(): string[] {
-    return Object.keys(this.state.agents).filter((agentId) => this.state.agents[agentId]?.lastPercent !== undefined);
+  /** Clears the handoff mark once its file has been deleted, so the idle handoff can write again for the context. */
+  clearHandoffWritten(agentId: string): void {
+    this.change(() => {
+      if (this.state.agents[agentId]?.handoffGeneration === undefined) return;
+      this.update(agentId, { handoffGeneration: undefined });
+    });
+  }
+
+  /**
+   * Every agent's last context reading, for the chip. Covers agents with no other record; an agent with no reported
+   * percentage is left out.
+   */
+  contextReadings(): Record<string, ContextUsageReading> {
+    const readings: Record<string, ContextUsageReading> = {};
+    for (const [agentId, agent] of Object.entries(this.state.agents)) {
+      if (agent.lastPercent === undefined) continue;
+      readings[agentId] =
+        agent.lastMaxTokens === undefined
+          ? { percent: agent.lastPercent }
+          : { percent: agent.lastPercent, maxTokens: agent.lastMaxTokens };
+    }
+    return readings;
   }
 
   /** The last reported context percentage a chip should show, or undefined when none was reported. */
@@ -165,10 +187,12 @@ export class ContextStateStore {
 
   /** Records the latest reported context percentage and maximum for the chip and the threshold menu. */
   setLastPercent(agentId: string, percent: number, maxTokens?: number): void {
-    this.update(agentId, {
-      lastPercent: Math.max(0, Math.min(100, Math.round(percent))),
-      lastMaxTokens: maxTokens,
-    });
+    this.change(() =>
+      this.update(agentId, {
+        lastPercent: Math.max(0, Math.round(percent)),
+        lastMaxTokens: maxTokens,
+      }),
+    );
   }
 
   /** Throws a RangeError for a value outside the whole percents the settings allow. */
@@ -179,27 +203,30 @@ export class ContextStateStore {
         `A context threshold must be a whole percent from ${MIN_CONTEXT_THRESHOLD_PERCENT} to ${MAX_CONTEXT_THRESHOLD_PERCENT}; got ${percent}.`,
       );
     }
-    this.update(agentId, { thresholdPercent: parsed.data });
+    this.change(() => this.update(agentId, { thresholdPercent: parsed.data }));
   }
 
   /** Starts a new context for the agent, so a threshold that already fired can fire again. */
   startNewContext(agentId: string): void {
-    this.update(agentId, { contextGeneration: this.contextGeneration(agentId) + 1 });
+    this.change(() => this.update(agentId, { contextGeneration: this.contextGeneration(agentId) + 1 }));
   }
 
   /** Drops an agent's threshold override. */
   clearThresholdOverride(agentId: string): void {
-    if (this.state.agents[agentId]?.thresholdPercent === undefined) return;
-    this.update(agentId, { thresholdPercent: undefined });
+    this.change(() => {
+      if (this.state.agents[agentId]?.thresholdPercent === undefined) return;
+      this.update(agentId, { thresholdPercent: undefined });
+    });
   }
 
   /** Drops an agent's override and context count, for example when the agent is archived. */
   clearAgent(agentId: string): void {
-    const agents = { ...this.state.agents };
-    delete agents[agentId];
-    this.state = { agents };
-    if (!this.writable) this.pendingClears.add(agentId);
-    this.persist();
+    this.change(() => {
+      const agents = { ...this.state.agents };
+      delete agents[agentId];
+      this.state = { agents };
+      this.persist();
+    });
   }
 
   /** Resolves once the stored file has been read and merged. */
@@ -207,9 +234,19 @@ export class ContextStateStore {
     return this.ready;
   }
 
-  /** Resolves once every queued write has finished. */
-  flush(): Promise<void> {
-    return this.writeQueue;
+  /**
+   * Resolves once every queued write has finished. It waits for the load first, since changes made before the load are
+   * queued as it finishes.
+   */
+  async flush(): Promise<void> {
+    await this.ready;
+    await this.writeQueue;
+  }
+
+  /** Applies a change now once the stored file has been read; before that, it waits for the read. */
+  private change(apply: () => void): void {
+    if (this.loaded) apply();
+    else this.deferred.push(apply);
   }
 
   private update(agentId: string, patch: Partial<AgentContextState>): void {
@@ -226,17 +263,26 @@ export class ContextStateStore {
         await this.io.rename(this.file, `${this.file}.corrupt`);
         this.log(`Baton context state was unreadable and was moved to ${this.file}.corrupt`);
       }
-      // An agent cleared while the file was unreadable must stay cleared: drop
-      // its stored record before merging, since the clear was never written.
-      const agents = { ...loaded.state.agents };
-      for (const agentId of this.pendingClears) delete agents[agentId];
-      this.pendingClears.clear();
-      this.state = { agents: { ...agents, ...this.state.agents } };
+      // Merge field by field, so a change kept in memory does not drop the stored fields of the same agent.
+      const merged: Record<string, AgentContextState> = { ...loaded.state.agents };
+      for (const [agentId, record] of Object.entries(this.state.agents)) {
+        merged[agentId] = { ...merged[agentId], ...record };
+      }
+      this.state = { agents: merged };
       this.writable = true;
     } catch (error: unknown) {
       this.writable = false;
       this.log(`Reading baton context state failed; leaving the stored file alone: ${String(error)}`);
     }
+    this.finishLoad();
+  }
+
+  /** Marks the file as read and applies the changes that waited for it, in the order they were made. */
+  private finishLoad(): void {
+    this.loaded = true;
+    const waiting = this.deferred;
+    this.deferred = [];
+    for (const apply of waiting) apply();
   }
 
   private persist(): void {
@@ -266,7 +312,8 @@ export function parseContextUsage(value: unknown): ContextUsage | null {
   const record = value as Record<string, unknown>;
   const used = typeof record.contextWindowUsedTokens === "number" ? record.contextWindowUsedTokens : null;
   if (used === null || !Number.isFinite(used)) return null;
-  const max = typeof record.contextWindowMaxTokens === "number" && Number.isFinite(record.contextWindowMaxTokens)
+  // A maximum of zero is no maximum: it would make every percentage infinite, so the fallback applies instead.
+  const max = typeof record.contextWindowMaxTokens === "number" && Number.isFinite(record.contextWindowMaxTokens) && record.contextWindowMaxTokens > 0
     ? record.contextWindowMaxTokens
     : undefined;
   return { usedTokens: used, maxTokens: max };

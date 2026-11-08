@@ -54,7 +54,7 @@ export function markContinued(
   now: number,
   continuedTitle?: string,
 ): BatonEntry {
-  return transition(entry, { continuedAgentId, continuedTitle }, now);
+  return transition(entry, { continuedAgentId, continuedTitle, continuedAt: now }, now);
 }
 
 export function isExpired(entry: BatonEntry, now: number): boolean {

@@ -22,7 +22,7 @@ Baton SHALL provide a global context threshold setting, a whole percentage from 
 
 ### Requirement: Per-agent threshold override
 
-Baton SHALL let a user set a percentage threshold for one agent from that agent's Baton menu, choosing from 20% to 90% in steps of 10%. A per-agent threshold SHALL take precedence over the global threshold for that agent only.
+Baton SHALL let a user set a percentage threshold for one agent from that agent's Baton menu, choosing from 20% to 90% in steps of 10%. Each choice shows its token size. The item is offered only for an agent whose context maximum Paseo reports, and the item title shows the agent's current override once one is set. A per-agent threshold SHALL take precedence over the global threshold for that agent only.
 
 #### Scenario: Override applies to one agent
 
@@ -57,7 +57,7 @@ Baton SHALL NOT trigger the threshold prompt for subagents, handoff writer agent
 
 ### Requirement: Threshold prompt offers two actions
 
-When the threshold triggers, Baton SHALL show a threshold row, titled with the percentage used, with two actions: "Create handoff" and "Create and continue". Baton SHALL NOT write a handoff or open a new agent until the user clicks one of these actions. Once a handoff file exists for the context, Baton SHALL NOT offer the prompt, and a turn that ends while the handoff is being written SHALL NOT offer it either.
+When the threshold triggers, Baton SHALL show a threshold row, titled with the percentage used, with two actions: "Create handoff" and "Create and continue". Baton SHALL NOT write a handoff or open a new agent until the user clicks one of these actions. Once a handoff file is saved for the context, Baton SHALL NOT offer the prompt, the row SHALL offer no actions and say that a handoff was saved, and a turn that ends while the handoff is being written SHALL NOT offer it either.
 
 #### Scenario: Create handoff only
 
@@ -67,7 +67,7 @@ When the threshold triggers, Baton SHALL show a threshold row, titled with the p
 #### Scenario: Create and continue
 
 - **WHEN** the user clicks "Create and continue" on the threshold prompt
-- **THEN** Baton writes the handoff file, then continues it into a new Paseo agent. The new agent opens in the app if the threshold row is still on screen, and the row links to it either way
+- **THEN** Baton writes the handoff file, then continues it into a new Paseo agent. The new agent opens in the app if the threshold row is still on screen. The row shows which agent it continued on and when, and links to that agent either way
 
 #### Scenario: Writer takes longer than a click
 
@@ -138,7 +138,7 @@ Baton SHALL show a text chip for each agent that reports usage, with the agent's
 
 ### Requirement: Idle handoff kept with context handoff
 
-Baton SHALL keep the idle handoff. When an agent goes idle and a handoff file already exists for the same context, Baton SHALL NOT write a second handoff for that context. A threshold prompt that was shown but not acted on does not write a file, so it does not suppress the idle handoff.
+Baton SHALL keep the idle handoff. When an agent goes idle and a handoff file already exists for the same context, Baton SHALL NOT write a second handoff for that context. When that file is deleted as stale, the context has no handoff again and the next idle handoff is written. A threshold prompt that was shown but not acted on does not write a file, so it does not suppress the idle handoff.
 
 #### Scenario: Idle without prior context handoff
 

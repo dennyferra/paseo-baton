@@ -119,6 +119,8 @@ describe("threshold helpers", () => {
   it("parses usage and rejects a missing used count", () => {
     expect(parseContextUsage({ contextWindowUsedTokens: 1, contextWindowMaxTokens: 2 })).toEqual({ usedTokens: 1, maxTokens: 2 });
     expect(parseContextUsage({ contextWindowMaxTokens: 2 })).toBeNull();
+    // A maximum of zero is no maximum, so the fallback applies rather than an infinite percentage.
+    expect(parseContextUsage({ contextWindowUsedTokens: 1, contextWindowMaxTokens: 0 })).toEqual({ usedTokens: 1 });
     expect(parseContextUsage(null)).toBeNull();
   });
   it("does not resurrect an agent archived before the first load", async () => {

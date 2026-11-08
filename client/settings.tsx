@@ -313,7 +313,7 @@ export function BatonSettingsScreen({ theme, layout }: PluginSurfaceProps) {
         />
         <SettingsInput
           label="Context threshold (%)"
-          hint={`Offer a handoff when a turn ends and the context is this full (${MIN_CONTEXT_THRESHOLD_PERCENT}-${MAX_CONTEXT_THRESHOLD_PERCENT}). The Baton menu can change it per agent.`}
+          hint={`Offer a handoff when a turn ends and the context is this full (${MIN_CONTEXT_THRESHOLD_PERCENT}-${MAX_CONTEXT_THRESHOLD_PERCENT}). Usage counts cached and output tokens, not only input. The Baton menu can change it per agent.`}
           initialValue={String(draft.contextThresholdPercent)}
           onChangeText={(value) =>
             update({

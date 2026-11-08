@@ -40,21 +40,23 @@ Its menu once a handoff exists, with turning handoffs off disabled:
     - **Continue from handoff** starts a new agent titled `[Handoff] <task>` in the same workspace
       and opens it. Its first message carries the full handoff text. The "Handoff saved" row in the chat has the same
       link for a handoff nobody has continued. A finished handoff also stays when Paseo closes the agent's idle runtime,
-      so Continue still works.
+      so Continue still works. After you continue, the handoff row in the original chat shows which agent it
+      continued on and when, with links to open that agent and to archive its tab.
     - **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
       available only for an idle session with no handoff yet and with handoffs turned on.
     - **Turn off / Turn on handoff for this session** pauses Baton for one agent. It is saved across
       restarts and disabled once a handoff exists. In an ignored workspace or project the menu says so.
-    - **Set context threshold** lets you set a per-agent threshold percentage for this agent only, or
-      clear it back to the global threshold with "Use global threshold".
+    - **Set context threshold** lets you set a per-agent threshold percentage for this agent only (20–90% in
+      steps of 10%, with token sizes), or clear it back to the
+      global threshold with "Use global threshold".
   - **Context threshold.** At the end of each turn Baton reads the agent's reported context usage. When
     it reaches the effective threshold (60% by default, 10–95%, per-agent override wins), the chip shows
     "Baton 62%" with the last reported percentage and the "Handoff saved" row offers **Create handoff**
     (writes only) and **Create and continue** (writes and opens a new agent). Nothing is written or opened
-    until you click. The prompt fires once per context; it re-arms on a new session or a continue.
+    until you click. The prompt fires once per context; it re-arms on a new session or a continue. Once a handoff is saved for the context, the row offers no buttons and says so.
     Agents that report no context maximum use a 120,000-token fallback: the global percentage applies to it
     (60% is 72,000 tokens), and a per-agent percentage override is ignored there. The idle handoff is kept, and skipped when a handoff
-    already exists for the same context.
+    already exists for the same context. If that handoff is later deleted as stale, the next idle handoff is written again.
 - **Stale handoff cleanup.** If you keep working in the original session and nobody continued the
   handoff, Baton deletes the stale file by default. Continued handoffs are kept, and a setting turns
   deletion off.
@@ -136,7 +138,7 @@ reaches the effective threshold it offers the handoff prompt without writing any
 whole percentage (10–95%, default 60%) that can be overridden per agent from the Baton menu. It fires once
 per context and re-arms on a new session or a continue. Agents that report no context maximum use a
 120,000-token fallback as an absolute limit, with no per-agent percentage. The idle handoff is kept, and
-skipped when a context handoff already exists for the same context.
+skipped when a context handoff already exists for the same context. Deleting that handoff as stale lets the next idle handoff write again.
 
 State lives in `~/.paseo/plugin-data/baton/baton-state.json` and `~/.paseo/plugin-data/baton/baton-context-state.json`,
 so a daemon restart recovers pending handoffs, re-appends rows for saved ones, and keeps per-agent

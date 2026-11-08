@@ -6,6 +6,17 @@ export const BATON_PLUGIN_ID = "baton";
 export const BATON_STATUS = z.enum(["pending", "writing", "done", "skipped", "disabled"]);
 export type BatonStatus = z.infer<typeof BATON_STATUS>;
 
+/** The timeline kind of every row Baton writes; the chat renders them with BatonRow. */
+export const BATON_ROW_KIND = "baton-ready";
+
+/** The fields recorded once a handoff's Continue opens a new agent. Shared by entries and rows. */
+const continuedShape = {
+  continuedAgentId: z.string().optional(),
+  continuedTitle: z.string().optional(),
+  /** When the handoff was continued, in epoch milliseconds. */
+  continuedAt: z.number().optional(),
+};
+
 export const batonEntrySchema = z.object({
   agentId: z.string(),
   workspaceId: z.string(),
@@ -17,8 +28,7 @@ export const batonEntrySchema = z.object({
   updatedAt: z.number(),
   status: BATON_STATUS,
   path: z.string().optional(),
-  continuedAgentId: z.string().optional(),
-  continuedTitle: z.string().optional(),
+  ...continuedShape,
   savedAt: z.number().optional(),
 });
 export type BatonEntry = z.infer<typeof batonEntrySchema>;
@@ -151,14 +161,15 @@ export const batonRowSchema = z.object({
   agentId: z.string(),
   /** Absent on the threshold prompt row: no handoff file exists until the user acts on it. */
   path: z.string().optional(),
-  continuedAgentId: z.string().optional(),
-  continuedTitle: z.string().optional(),
+  ...continuedShape,
   notice: z.string().optional(),
   savedAt: z.number().optional(),
   /** Set on the threshold prompt row: the percent the context was at. */
   usedPercent: z.number().optional(),
   /** Set on the threshold row once the user has acted on its prompt. Its buttons stay hidden until the write fails. */
-  handled: z.boolean().optional(),
+  requested: z.boolean().optional(),
+  /** Set on the threshold row once a handoff was saved for its context. The row then offers no buttons. */
+  saved: z.boolean().optional(),
 });
 export type BatonRowData = z.infer<typeof batonRowSchema>;
 
@@ -208,6 +219,13 @@ export const handoffInfoSchema = z.object({
 });
 export type HandoffInfo = z.infer<typeof handoffInfoSchema>;
 
+/** An agent's last context reading: its whole percentage, and the maximum Paseo reported with it, when it reported one. */
+export const contextUsageSchema = z.object({
+  percent: z.number(),
+  maxTokens: z.number().optional(),
+});
+export type ContextUsageReading = z.infer<typeof contextUsageSchema>;
+
 export const wakeRpc = defineRpc({
   name: "baton.wake",
   input: z.object({ workspaceIds: z.array(z.string()).default([]) }),
@@ -217,9 +235,7 @@ export const wakeRpc = defineRpc({
     disabledAgentIds: z.array(z.string()).default([]),
     writingAgentIds: z.array(z.string()).default([]),
     ignoredWorkspaces: z.record(z.string(), z.enum(["workspace", "project"])).default({}),
-    contextPercents: z.record(z.string(), z.number()).default({}),
-    /** The context maximum, in tokens, that Paseo reported for each agent. Absent when none was reported. */
-    contextLimits: z.record(z.string(), z.number()).default({}),
+    contextUsage: z.record(z.string(), contextUsageSchema).default({}),
   }),
 });
 

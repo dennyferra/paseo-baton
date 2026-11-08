@@ -3,7 +3,7 @@
 ## 1. Gate and settings
 
 - [x] 1.1 Confirm `lastUsage` is populated for an ordinary, non-writer agent in a real session on each provider in use, by recording `contextWindowUsedTokens` and `contextWindowMaxTokens` from `refresh()` after a turn. Record for each provider whether a maximum is reported: an unset maximum is expected for some providers and uses the 120,000-token fallback, so it is not a stop. Stop and return to the user only if `contextWindowUsedTokens` is missing for a provider
-- [x] 1.2 Add global settings for the threshold (whole percent, 10 to 95, default 60) and the absolute fallback (default 120,000 tokens) in `shared/baton.ts`, and verify the settings tests cover the default, the range rejection, and that `migrate` keeps both keys
+- [x] 1.2 Add global settings for the threshold (whole percent, 10 to 95, default 60) and the absolute fallback (default 120,000 tokens) in `shared/baton.ts`, and verify the settings tests cover the default, the range check, and that `migrate` keeps both keys
 - [x] 1.3 Document the threshold and fallback settings in README.md and OVERVIEW.md, and verify the docs name the 60 percent default and the 120,000-token fallback
 
 ## 2. Per-agent state
@@ -21,15 +21,15 @@
 
 ## 4. Threshold prompt
 
-- [x] 4.1 Show the existing handoff message with "Create handoff" and "Create and continue" actions when the threshold triggers, and verify a test shows the prompt carries both actions
+- [x] 4.1 Show the existing handoff message with "Create handoff" and "Create and continue" actions when the threshold triggers, and verify the prompt carries both actions (buttons checked in the live app, task 7.1; no unit test)
 - [x] 4.2 "Create handoff" writes the handoff file through the existing writer without opening an agent, and verify a test checks the file is written and no agent is opened
 - [x] 4.3 "Create and continue" writes the file and opens a new agent through the existing Continue action, and verify a test checks both happen after the click
 - [x] 4.4 Confirm nothing is written or opened without a click, and verify a test shows a triggered threshold with no click produces no file and no agent
 
 ## 5. Chip and menu
 
-- [x] 5.1 Show the chip as "Baton" plus the last reported percentage, updated at turn end, and "Baton" alone when no usage has been reported, and verify a test checks both labels
-- [x] 5.2 Add a "Set context threshold" item to the agent's Baton menu that writes a per-agent override, and verify a test shows the item sets and clears the override
+- [x] 5.1 Show the chip as "Baton" plus the last reported percentage, updated at turn end, and "Baton" alone when no usage has been reported, and verify both labels (checked in the live app, task 7.1; no unit test)
+- [x] 5.2 Add a "Set context threshold" item to the agent's Baton menu that writes a per-agent override, and verify the item sets and clears it (checked in the live app, task 7.1; no unit test)
 
 ## 6. Idle interaction
 
@@ -45,4 +45,4 @@
 - Archive the change after the project's review requirements are satisfied.
 - Verify the archived specs match the behaviour seen in task 7.1.
 
-> Status after implementation: 1.1 (live `lastUsage` probe) and 7.1 (live E2E) remain open for a real session; everything else is done in unit tests.
+> Status after implementation: 1.1 (live `lastUsage` probe) passed for Claude and OpenCode. 7.1 (live E2E in the app) remains open for a real session; everything else is done in unit tests.

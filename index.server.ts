@@ -69,8 +69,7 @@ export default function contribute(server: PluginServerContext) {
         disabledAgentIds: [],
         writingAgentIds: [],
         ignoredWorkspaces: {},
-        contextPercents: {},
-        contextLimits: {},
+        contextUsage: {},
       };
     }
   });

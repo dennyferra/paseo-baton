@@ -59,6 +59,7 @@ describe("transitions", () => {
     expect(skipped.status).toBe("skipped");
     const continued = markContinued(done, "agent-b", NOW + 40);
     expect(continued.continuedAgentId).toBe("agent-b");
+    expect(continued.continuedAt).toBe(NOW + 40);
     expect(continued.path).toBe(done.path);
     expect(done.savedAt).toBe(NOW + 20);
     expect(continued.savedAt).toBe(NOW + 20);

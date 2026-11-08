@@ -11,6 +11,11 @@ const NOW = 1_000_000;
 const HANDOFF_PATH = "/work/.paseo/handoffs/agent-a.md";
 
 const DATA_DIR = "/home/.paseo/plugin-data/baton";
+/** The context generation stored on disk for an agent, read after the controller has flushed. */
+function storedGeneration(io: ReturnType<typeof memoryIo>, agentId: string): number {
+  const state = JSON.parse(io.files.get(resolveContextStateFile(DATA_DIR)) ?? "{}") as { agents?: Record<string, { contextGeneration?: number }> };
+  return state.agents?.[agentId]?.contextGeneration ?? 0;
+}
 
 function makeController(
   io: ReturnType<typeof memoryIo>,
@@ -52,14 +57,23 @@ function settings(overrides: Partial<BatonSettings> = {}) {
   };
 }
 
-function stubPaseo(opts: { createId?: string; history?: Record<string, unknown[]>; thinkingOptionId?: string; usage?: Record<string, unknown>; usageByAgent?: Record<string, unknown> } = {}) {
+function stubPaseo(opts: {
+  createId?: string;
+  history?: Record<string, unknown[]>;
+  thinkingOptionId?: string;
+  usage?: Record<string, unknown>;
+  usageByAgent?: Record<string, unknown>;
+  status?: string;
+  failAppends?: number;
+} = {}) {
   const createId = opts.createId ?? "agent-continued";
   const calls: string[] = [];
   const created: Array<Record<string, unknown>> = [];
   const appended: Array<Record<string, unknown>> = [];
   const archived: string[] = [];
+  let failedAppends = 0;
   const agents: Array<{ id: string; status: string; provider: string; model: string | null; workspaceId: string; thinkingOptionId?: string | null }> = [
-    { id: "agent-a", status: "idle", provider: "claude", model: "claude-sonnet-5-5", workspaceId: "wks-a", thinkingOptionId: opts.thinkingOptionId ?? null },
+    { id: "agent-a", status: opts.status ?? "idle", provider: "claude", model: "claude-sonnet-5-5", workspaceId: "wks-a", thinkingOptionId: opts.thinkingOptionId ?? null },
   ];
   const paseo = {
     agents: {
@@ -83,6 +97,10 @@ function stubPaseo(opts: { createId?: string; history?: Record<string, unknown[]
           refetch: async () => ({ entries: (opts.history?.[agentId] ?? []).map((item) => ({ item })) }),
           append: async (item: Record<string, unknown>) => {
             calls.push(`append:${agentId}`);
+            if (failedAppends < (opts.failAppends ?? 0)) {
+              failedAppends++;
+              throw new Error("append failed");
+            }
             appended.push(item);
             return { seq: 1, epoch: "e" };
           },
@@ -560,6 +578,9 @@ describe("BatonController", () => {
     await controller.wake(paseo as never, ["wks-a"]);
     const titles = appended.slice(1).map((item) => (item.data as { continuedTitle?: string }).continuedTitle);
     expect(titles.every((title) => title === "[Handoff] Fix login bug")).toBe(true);
+    // The continue time is kept the same way, so the row can show when the handoff was continued.
+    const continuedAts = appended.slice(1).map((item) => (item.data as { continuedAt?: number }).continuedAt);
+    expect(continuedAts.every((at) => at === NOW)).toBe(true);
     await controller.dispose();
   });
 
@@ -1436,29 +1457,33 @@ describe("context threshold state through the controller", () => {
     await first.dispose();
 
     const second = makeController(io);
-    await second.contextStateReady();
-    expect(second.thresholdOverride("agent-a")).toBe(40);
+    expect((await second.getContextThreshold("agent-a")).percent).toBe(40);
     await second.dispose();
   });
 
-  it("refuses a threshold outside the allowed percents", () => {
+  it("refuses a threshold outside the allowed percents", async () => {
     const controller = makeController(memoryIo());
     expect(() => controller.setContextThreshold("agent-a", 9)).toThrow(RangeError);
-    expect(controller.thresholdOverride("agent-a")).toBeUndefined();
+    expect((await controller.getContextThreshold("agent-a")).percent).toBeNull();
   });
 
-  it("starts a new context for a created interactive session, and not for resume or history", () => {
-    const controller = makeController(memoryIo());
+  it("starts a new context for a created interactive session, and not for resume or history", async () => {
+    const io = memoryIo();
+    const controller = makeController(io);
     controller.onSessionOpened("agent-a", "create", "interactive");
     controller.onSessionOpened("agent-a", "resume", "interactive");
     controller.onSessionOpened("agent-a", "create", "history");
-    expect(controller.contextGeneration("agent-a")).toBe(1);
-    controller.onSessionOpened("agent-a", "import", "interactive");
-    expect(controller.contextGeneration("agent-a")).toBe(2);
+    await controller.dispose();
+    expect(storedGeneration(io, "agent-a")).toBe(1);
+    const reopened = makeController(io);
+    reopened.onSessionOpened("agent-a", "import", "interactive");
+    await reopened.dispose();
+    expect(storedGeneration(io, "agent-a")).toBe(2);
   });
 
   it("does not start a new context on an ordinary turn", async () => {
-    const controller = makeController(memoryIo());
+    const io = memoryIo();
+    const controller = makeController(io);
     const { paseo } = stubPaseo();
     controller.onTurnStarted({ id: "agent-a" });
     await controller.onTurnEnded(
@@ -1466,8 +1491,8 @@ describe("context threshold state through the controller", () => {
       [],
       paseo as never,
     );
-    expect(controller.contextGeneration("agent-a")).toBe(0);
     await controller.dispose();
+    expect(storedGeneration(io, "agent-a")).toBe(0);
   });
 
   it("clears an archived agent's threshold and context count, on disk as well", async () => {
@@ -1479,10 +1504,9 @@ describe("context threshold state through the controller", () => {
     await controller.dispose();
 
     const reloaded = makeController(io);
-    await reloaded.contextStateReady();
-    expect(reloaded.thresholdOverride("agent-a")).toBeUndefined();
-    expect(reloaded.contextGeneration("agent-a")).toBe(0);
+    expect((await reloaded.getContextThreshold("agent-a")).percent).toBeNull();
     await reloaded.dispose();
+    expect(storedGeneration(io, "agent-a")).toBe(0);
   });
 
   it("does not overwrite a context file it could not read, and writes once it can read it again", async () => {
@@ -1531,9 +1555,12 @@ describe("context threshold check", () => {
     const io = memoryIo();
     const controller = makeController(io);
     const stub = stubPaseo({ usage: below });
-    expect((await controller.checkThreshold(parent as never, stub.paseo as never)).triggered).toBe(false);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(0);
     const stub2 = stubPaseo({ usage: above });
-    expect((await controller.checkThreshold(parent as never, stub2.paseo as never)).percent).toBe(61);
+    await controller.checkThreshold(parent as never, stub2.paseo as never);
+    expect(promptCount(stub2)).toBe(1);
+    expect(await chipPercent(controller, stub2)).toBe(61);
     await controller.dispose();
   });
 
@@ -1541,14 +1568,14 @@ describe("context threshold check", () => {
     const io = memoryIo();
     const controller = makeController(io);
     const stub = stubPaseo({ usage: above });
-    const first = await controller.checkThreshold(parent as never, stub.paseo as never);
-    expect(first.triggered).toBe(true);
-    expect(first.percent).toBe(61);
-    const second = await controller.checkThreshold(parent as never, stub.paseo as never);
-    expect(second.triggered).toBe(false);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(1);
+    expect(await chipPercent(controller, stub)).toBe(61);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(1);
     controller.onSessionOpened("agent-a", "create", "interactive");
-    const third = await controller.checkThreshold(parent as never, stub.paseo as never);
-    expect(third.triggered).toBe(true);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(2);
     await controller.dispose();
   });
 
@@ -1556,18 +1583,11 @@ describe("context threshold check", () => {
     const io = memoryIo();
     const controller = makeController(io);
     const stub = stubPaseo({ usage: above });
-    // The row is the prompt; listing the timeline after the check shows one
-    // appended threshold row and no handoff file, no created agent.
-    const places: string[] = [];
-    stub.paseo.agents.ref("agent-a").timeline = {
-      refetch: async () => ({ entries: [] }),
-      append: async (item: Record<string, unknown>) => {
-        places.push(`append:${(item as { kind?: string }).kind}`);
-        return { seq: 1, epoch: "e" };
-      },
-    };
-    const result = await controller.checkThreshold(parent as never, stub.paseo as never);
-    expect(result.triggered).toBe(true);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    // The only write is the threshold row, which is the prompt. No handoff file was written and no agent was created.
+    expect(stub.appended).toHaveLength(1);
+    expect(promptCount(stub)).toBe(1);
+    expect([...io.files.keys()].some((key) => key.endsWith(".md"))).toBe(false);
     const saved = JSON.parse(io.files.get(STATE_FILE) ?? "{}");
     expect(saved["agent-a"]).toBeUndefined();
     expect(stub.created).toEqual([]);
@@ -1577,9 +1597,10 @@ describe("context threshold check", () => {
   it("triggers on the fallback when no maximum is reported", async () => {
     const controller = makeController(memoryIo());
     const stub = stubPaseo({ usage: { contextWindowUsedTokens: 130_000 } });
-    const result = await controller.checkThreshold(parent as never, stub.paseo as never);
-    expect(result.percent).toBeCloseTo(108.33, 1);
-    expect(result.triggered).toBe(true);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(1);
+    // The chip shows the real percentage when usage passes the limit: 130,000 of the 120,000 fallback is 108 percent.
+    expect(await chipPercent(controller, stub)).toBe(108);
     await controller.dispose();
   });
 
@@ -1588,8 +1609,8 @@ describe("context threshold check", () => {
     const controller = makeController(memoryIo());
     controller.setContextThreshold("agent-a", 40);
     const stub = stubPaseo({ usage: { contextWindowUsedTokens: 60_000 } });
-    const result = await controller.checkThreshold(parent as never, stub.paseo as never);
-    expect(result.triggered).toBe(false);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(0);
     await controller.dispose();
   });
 
@@ -1598,7 +1619,7 @@ describe("context threshold check", () => {
     const stub = stubPaseo({ usage: { contextWindowUsedTokens: 62_000, contextWindowMaxTokens: 100_000 } });
     await controller.checkThreshold(parent as never, stub.paseo as never);
     const woke = await controller.wake(stub.paseo as never, ["wks-a"]);
-    expect(woke.contextPercents["agent-a"]).toBe(62);
+    expect(woke.contextUsage["agent-a"]?.percent).toBe(62);
     await controller.dispose();
   });
 
@@ -1606,8 +1627,8 @@ describe("context threshold check", () => {
     const io = memoryIo();
     const controller = makeController(io);
     const stub = stubPaseo({ usage: above });
-    const fired = await controller.checkThreshold(parent as never, stub.paseo as never);
-    expect(fired.triggered).toBe(true);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(1);
     // No handoff file was written, so the idle path must still schedule one.
     await controller.onTurnEnded(parent as never, [], stub.paseo as never);
     await controller.dispose();
@@ -1615,7 +1636,60 @@ describe("context threshold check", () => {
     expect(state["agent-a"]?.status).toBe("pending");
   });
 
+  it("retries the prompt on the next turn when its row could not be written", async () => {
+    const controller = makeController(memoryIo());
+    const stub = stubPaseo({ usage: above, failAppends: 1 });
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(0);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(1);
+    await controller.dispose();
+  });
 
+  it("reopens the prompt when the agent is not idle, so the request does not stay pending", async () => {
+    const controller = makeController(memoryIo());
+    const stub = stubPaseo({ usage: above, status: "running" });
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    await expect(
+      controller.createThresholdHandoff({ agentId: "agent-a", continue: false }, stub.paseo as never),
+    ).rejects.toThrow(/still working/);
+    expect(lastThresholdRow(stub).requested).toBe(false);
+    await controller.dispose();
+  });
+
+  it("reopens the prompt when the agent closes while its handoff is being written", async () => {
+    const controller = makeController(memoryIo());
+    const stub = stubPaseo({ usage: above });
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    const started = await controller.createThresholdHandoff({ agentId: "agent-a", continue: false }, stub.paseo as never);
+    expect(started.started).toBe(true);
+    expect(lastThresholdRow(stub).requested).toBe(true);
+    controller.onClosed({ id: "agent-a" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(lastThresholdRow(stub).requested).toBe(false);
+    await controller.dispose();
+  });
+
+  /** The data of the agent's most recent threshold row. */
+  function lastThresholdRow(stub: { appended: Array<Record<string, unknown>> }): { requested?: boolean } {
+    const rows = stub.appended.filter((item) => item.id === "baton-threshold:agent-a");
+    return (rows[rows.length - 1]?.data ?? {}) as { requested?: boolean };
+  }
+
+
+  /** Threshold prompt rows the agent's timeline received: rows with no requested, saved, or continued field. */
+  function promptCount(stub: { appended: Array<Record<string, unknown>> }, agentId = "agent-a"): number {
+    return stub.appended.filter((item) => {
+      if (item.id !== `baton-threshold:${agentId}`) return false;
+      const data = (item.data ?? {}) as { requested?: boolean; saved?: boolean; continuedAgentId?: string };
+      return data.requested === undefined && data.saved === undefined && data.continuedAgentId === undefined;
+    }).length;
+  }
+  /** The chip percentage for an agent, as wake reports it. */
+  async function chipPercent(controller: BatonController, stub: ReturnType<typeof stubPaseo>, agentId = "agent-a"): Promise<number | undefined> {
+    const woke = await controller.wake(stub.paseo as never, ["wks-a"]);
+    return woke.contextUsage[agentId]?.percent;
+  }
   // The writer agent never replies in these tests, so the fallback timeout writes the handoff mechanically.
   async function writtenByFallback(controller: BatonController, agentId: string, paseo: unknown, continueAfter: boolean) {
     const result = await controller.createThresholdHandoff({ agentId, continue: continueAfter }, paseo as never);
@@ -1649,8 +1723,8 @@ describe("context threshold check", () => {
       expect(result.started).toBe(true);
       expect(stub.created.filter((options) => options.title !== BATON_WRITER_TITLE)).toHaveLength(1);
       // Continue starts the new agent's own context, so its threshold can fire again.
-      expect(controller.contextGeneration("agent-continued")).toBe(1);
       await controller.dispose();
+      expect(storedGeneration(io, "agent-continued")).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -1672,6 +1746,29 @@ describe("context threshold check", () => {
     }
   });
 
+  it("writes the idle handoff again once the stale handoff file was deleted", async () => {
+    vi.useFakeTimers();
+    try {
+      const io = memoryIo();
+      const controller = makeController(io);
+      const stub = stubPaseo({ usage: { contextWindowUsedTokens: 610_000, contextWindowMaxTokens: 1_000_000 } });
+      await writtenByFallback(controller, "agent-a", stub.paseo, false);
+      const handoffFile = [...io.files.keys()].find((key) => key.endsWith(".md"));
+      expect(handoffFile).toBeDefined();
+      // The user keeps working in the session, so the uncontinued handoff is deleted.
+      controller.onTurnStarted({ id: "agent-a" });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(io.files.has(handoffFile as string)).toBe(false);
+      // With no file left for this context, the next idle turn schedules a handoff again.
+      await controller.onTurnEnded(parent as never, [], stub.paseo as never);
+      await controller.dispose();
+      const state = JSON.parse(io.files.get(STATE_FILE) ?? "{}");
+      expect(state["agent-a"]?.status).toBe("pending");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("offers no threshold prompt once a handoff was written for the context", async () => {
     vi.useFakeTimers();
     try {
@@ -1679,8 +1776,8 @@ describe("context threshold check", () => {
       const controller = makeController(io);
       const stub = stubPaseo({ usage: above });
       await writtenByFallback(controller, "agent-a", stub.paseo, false);
-      const after = await controller.checkThreshold(parent as never, stub.paseo as never);
-      expect(after.triggered).toBe(false);
+      await controller.checkThreshold(parent as never, stub.paseo as never);
+      expect(promptCount(stub)).toBe(0);
       await controller.dispose();
     } finally {
       vi.useRealTimers();
@@ -1699,7 +1796,7 @@ describe("context threshold check", () => {
       // The writer's own "Handoff saved" row may follow; a threshold prompt is the one that is neither handled nor new.
       const prompts = stub.appended
         .slice(before)
-        .filter((item) => item.id === "baton-threshold:agent-a" && (item.data as { handled?: boolean }).handled !== true);
+        .filter((item) => item.id === "baton-threshold:agent-a" && (item.data as { requested?: boolean }).requested !== true);
       expect(prompts).toHaveLength(0);
       await controller.dispose();
     } finally {
@@ -1718,27 +1815,51 @@ describe("context threshold check", () => {
         (item) => item.id === "baton-threshold:agent-a" && (item.data as { continuedAgentId?: string }).continuedAgentId !== undefined,
       );
       expect(links).toHaveLength(1);
-      expect(links[0].data).toMatchObject({ continuedAgentId: "agent-continued", handled: true });
+      expect(links[0].data).toMatchObject({ continuedAgentId: "agent-continued", requested: true, saved: true });
+      // The threshold row shows the title and time, like the handoff row does.
+      const linked = links[0].data as { continuedTitle?: string; continuedAt?: number };
+      expect(linked.continuedTitle).toMatch(/^\[Handoff\] /);
+      expect(typeof linked.continuedAt).toBe("number");
       await controller.dispose();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("clears a per-agent threshold when set to null", () => {
+  it("marks the threshold row saved once a handoff is written for its context, so it offers no buttons", async () => {
+    vi.useFakeTimers();
+    try {
+      const io = memoryIo();
+      const controller = makeController(io);
+      const stub = stubPaseo({ usage: above });
+      // The prompt is shown first and nobody acts on it.
+      await controller.checkThreshold(parent as never, stub.paseo as never);
+      expect(promptCount(stub)).toBe(1);
+      await writtenByFallback(controller, "agent-a", stub.paseo, false);
+      const rows = stub.appended.filter((item) => item.id === "baton-threshold:agent-a");
+      const latest = rows[rows.length - 1].data as { saved?: boolean; requested?: boolean };
+      expect(latest.saved).toBe(true);
+      expect(latest.requested).not.toBe(true);
+      await controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears a per-agent threshold when set to null", async () => {
     const controller = makeController(memoryIo());
     controller.setContextThreshold("agent-a", 40);
     controller.setContextThreshold("agent-a", null);
-    expect(controller.thresholdOverride("agent-a")).toBeUndefined();
+    expect((await controller.getContextThreshold("agent-a")).percent).toBeNull();
   });
 
   it("shows the chip for an agent whose prompts are gated by an ignored workspace", async () => {
     const controller = makeController(memoryIo(), { settings: settings({ ignoredWorkspaceIds: ["wks-a"] }) });
     const stub = stubPaseo({ usage: { contextWindowUsedTokens: 62_000, contextWindowMaxTokens: 100_000 } });
-    const result = await controller.checkThreshold(parent as never, stub.paseo as never);
-    expect(result.triggered).toBe(false);
+    await controller.checkThreshold(parent as never, stub.paseo as never);
+    expect(promptCount(stub)).toBe(0);
     const woke = await controller.wake(stub.paseo as never, []);
-    expect(woke.contextPercents["agent-a"]).toBe(62);
+    expect(woke.contextUsage["agent-a"]?.percent).toBe(62);
     await controller.dispose();
   });
 
@@ -1749,9 +1870,8 @@ describe("context threshold check", () => {
     await first.checkThreshold(parent as never, stub.paseo as never);
     await first.dispose();
     const second = makeController(io);
-    await second.contextStateReady();
     const woke = await second.wake(stub.paseo as never, []);
-    expect(woke.contextPercents["agent-a"]).toBe(62);
+    expect(woke.contextUsage["agent-a"]?.percent).toBe(62);
     await second.dispose();
   });
 });

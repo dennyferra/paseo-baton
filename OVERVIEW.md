@@ -23,7 +23,7 @@ chip in the composer that opens a menu:
 
 - **Continue from handoff** (only when a handoff exists) creates a new agent in the same workspace
   titled `[Handoff] <short title>` (a short summary the writer adds so you can recall the work later) whose first message carries the full handoff text, so the new agent starts with the context it needs. The row in the original tab updates
-  to say which tab it was continued on, with an **Archive this tab** link. The "Handoff saved" row also has a
+  to say which tab it was continued on and when, with an **Open continued agent** link and an **Archive this tab** link. The "Handoff saved" row also has a
   **Continue from this handoff** link for a handoff nobody has continued yet, even when Baton no longer tracks it.
 - **Create handoff now** writes the handoff immediately instead of waiting for the idle timer. It is
   available only for an idle session that has no handoff yet and has handoffs turned on, and is hidden
@@ -33,12 +33,13 @@ chip in the composer that opens a menu:
   a disabled note saying so instead of the toggle.
 - **Set context threshold** (`contextThresholdPercent`, default 60): a whole percentage (10–95) of the
   model's reported context window at which Baton offers a handoff. Each agent can override it from its
-  **Set context threshold** menu item, for that agent only. When usage reaches the threshold, the chip shows
+  **Set context threshold** menu item, for that agent only. The menu offers 20–90% in steps of 10%, and each
+  label shows its token size. Agents that report no context maximum get no threshold item. When usage reaches the threshold, the chip shows
   "Baton 62%" and the existing handoff message offers "Create handoff" (write only) and "Create and continue"
   (write and open a new agent). Nothing is written or opened until you click. The prompt fires once per
   context and re-arms on a new session or a continue. For agents that report no context maximum, a
   120,000-token fallback (`contextFallbackTokens`) is used when no maximum is reported: the global percentage
-  applies to it (60% is 72,000 tokens), and a per-agent percentage override is ignored there. The idle handoff is kept, and skipped when a context handoff already exists
+  applies to it (60% is 72,000 tokens), and a per-agent percentage override is ignored there. The idle handoff is kept, and skipped when a context handoff already exists (deleting that handoff as stale lets the next idle handoff write again)
   for the same context.
 
 If you keep working in the original session after a handoff was saved and nobody continued it, Baton

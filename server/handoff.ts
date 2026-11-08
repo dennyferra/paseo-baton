@@ -1,5 +1,5 @@
 /** Set before a continue prompt's handoff text. Drafts leave the text out, since the file is read on its own. */
-export const CONTINUE_BODY_MARK = "\n\n<handoff>\n";
+export const CONTINUE_BODY_MARK = "<handoff>\n";
 /** The opening words of a continue prompt, before the handoff path. Timeline reading matches them to find the file. */
 export const CONTINUE_LEAD = "This session continues the handoff saved at";
 
@@ -10,7 +10,7 @@ export const CONTINUE_LEAD = "This session continues the handoff saved at";
 export function buildContinuePrompt(handoffPath: string, text: string): string {
   return [
     `${CONTINUE_LEAD} ${handoffPath}. Its full text is below, so there is no need to read the file.`,
-    `${CONTINUE_BODY_MARK.trimStart()}${text.trimEnd()}`,
+    `${CONTINUE_BODY_MARK}${text.trimEnd()}`,
     "</handoff>",
     "",
     "Continue the task it describes.",
