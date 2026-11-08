@@ -170,7 +170,7 @@ export function createBatonPills({ client }: BatonPillsDeps): BatonPillsHandle {
             behavior: {
               kind: "menu" as const,
               items: [
-                ...[40, 50, 60, 70, 80, 90].map((percent) => ({
+                ...[20, 30, 40, 50, 60, 70, 80, 90].map((percent) => ({
                   kind: "item" as const,
                   id: `threshold-${percent}`,
                   title: thresholdTitle(percent, contextLimits.get(agentId)),
