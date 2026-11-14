@@ -92,6 +92,12 @@ describe("baton_list_handoffs", () => {
 });
 
 describe("baton_read_handoff", () => {
+  it("drops attribution lines a writer saved late", async () => {
+    await writeHandoff("agent-late.md", "# Task\nship it\n- Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>\n- keep it small");
+    const result = await toolNamed("baton_read_handoff").execute({ file: "agent-late.md" }, contextFor(cwd));
+    expect(result).toEqual({ text: "# Task\nship it\n- keep it small" });
+  });
+
   it("returns the handoff text", async () => {
     await writeHandoff("agent-a.md", "# Task\nship it");
     const result = await toolNamed("baton_read_handoff").execute({ file: "agent-a.md" }, contextFor(cwd));

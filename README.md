@@ -22,9 +22,10 @@ Its menu once a handoff exists, with turning handoffs off disabled:
   `<agentId>.md` to `.paseo/handoffs` in the agent's workspace (or your custom location) (Task, Context, Relevant files, Current
   state, What was tried, Decisions, Acceptance criteria, Constraints).
 - **Writer subagent.** A `[Handoff writer]` subagent of the idle agent drafts the document. It shows under that
-  agent's subagents and Paseo does not send a "finished" notification for it. Baton leaves it there after it
-  finishes, so you can open it to read exactly what it was given. Only the latest writer for an agent is kept:
-  starting its next handoff archives the earlier one, and Paseo archives the rest with the idle agent.
+  agent's subagents and Paseo does not send a "finished" notification for it. Baton archives it as soon as its
+  handoff is saved from its reply or file. A writer that saved nothing usable, or that only confirmed a file the idle agent's own turn had already settled, is left in place, so you can open it to read what it was given
+  and said. Starting the next handoff archives an earlier writer that is still there, and Paseo archives the rest
+  with the idle agent.
   The idle agent's own chat only gains a "Handoff saved" row. If the writer fails or saves nothing usable,
   Baton falls back to a mechanical summary of the conversation, with no model call.
 - **What the writer sees.** The first request (heartbeat and agent messages count too), your messages and the agent's replies, the files it

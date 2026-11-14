@@ -59,8 +59,11 @@ For review:
 - Subagent: for each handoff it starts one short-lived subagent of the idle agent (labelled baton-writer, with
   a parent label), using the user's own agent profile or the idle agent's provider, under the user's normal
   permission mode. The writer is told not to use tools and to reply with the document, and Baton accepts a
-  file it saved itself at the handoff path. Baton archives only the earlier writers it created for the same
-  agent, and leaves the finished one in place so the user can read its prompt.
+  file it saved itself at the handoff path. Baton archives only writers it created: one whose handoff was saved, one that timed out,
+  one still running when the plugin restarted, a standalone writer from an earlier version, and the earlier writers
+  for the same agent. A writer that saved nothing usable stays so the user can read its prompt. Baton also deletes
+  commit-trailer and "Generated with" lines from a writer's document, and labels the machine draft's current state "as of
+  <time>, unverified" (the writer is asked to do the same; Baton does not enforce it).
 - No runtime software installation. The package is readable TypeScript with no bundling.
 ```
 
