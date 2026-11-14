@@ -66,10 +66,10 @@ Settings live under Settings -> Plugins -> Baton. Changes are saved automaticall
   model and effort are used; its mode is ignored. The default, "Same as running agent", uses the idle agent's
   own model and effort. The writer is asked to reply with the document, and Baton also accepts a file the writer
   saved itself. It is a short-lived subagent of the idle agent: it appears under that agent's subagents, Paseo
-  sends no "finished" notification for it, and Baton leaves it there after it finishes so you can open it and
-  read exactly what it was given. Only the latest writer for an agent is kept, because starting the next
-  handoff archives the earlier one, and Paseo archives the rest with the idle agent. The idle agent's own
-  chat only shows the Handoff saved row.
+  sends no "finished" notification for it, and Baton archives it as soon as its handoff is saved from its reply or file (a writer that only confirms a file the idle agent's own turn had already settled is left in place). A writer
+  that saved nothing usable is left in place so you can open it and read what it was given and said. Starting
+  the next handoff archives an earlier writer that is still there, and Paseo archives the rest with the idle
+  agent. The idle agent's own chat only shows the Handoff saved row.
 - **Conversation detail** (`conversationDetail`, default Standard): how much of the conversation the writer
   sees. Compact reads up to 1,000 history entries and keeps about 30,000 characters, Standard 2,000 entries
   and 60,000, Full 5,000 entries and 150,000. Long messages keep their start and end. When the conversation
@@ -124,7 +124,7 @@ Baton builds from the agent's conversation, which it reads back from Paseo when 
 
 Tool output is not included. The writer runs on the provider and model of the profile you pick, or on the idle
 agent's own provider and model by default, so that provider sees this text. The writer subagent keeps the prompt
-it was given, visible in the Paseo app until it is archived. If the writer fails or times out, Baton builds a
+it was given, visible in the Paseo app until it is archived, which Baton does once the handoff is saved. If the writer fails or times out, Baton builds a
 fallback summary locally and makes no further model call, but a failed writer attempt may already have sent the
 draft to its provider.
 

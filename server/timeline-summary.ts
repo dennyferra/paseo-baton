@@ -313,6 +313,8 @@ export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
     "",
     "# Current state",
     "",
+    `As of ${new Date(input.now).toISOString()}, unverified (the agent's last message, which the next agent must check against the real state before acting):`,
+    "",
     currentState,
     "",
     "# What was tried",
@@ -335,7 +337,14 @@ export function renderMechanicalHandoff(input: MechanicalHandoffInput): string {
     ...(plan ? ["## Plan (latest)", "", cutMiddle(plan, limits.maxTextChars), ""] : []),
     ...(input.repoFacts ? ["## Repo state", "", input.repoFacts, ""] : []),
     ...(input.previousHandoff
-      ? ["## Previous handoff", "", "This session was started from this handoff, so its details still apply.", "", cutMiddle(input.previousHandoff, limits.maxTextChars * 2), ""]
+      ? [
+          "## Previous handoff",
+          "",
+          "An earlier snapshot, older than the Generated time above and unverified. This session was started from it, so its plans may still apply, but its state may not. It is quoted, so its own Context, Agent and Provider lines are not this session's.",
+          "",
+          ...cutMiddle(input.previousHandoff, limits.maxTextChars * 2).split("\n").map((line) => `> ${line}`),
+          "",
+        ]
       : []),
     "## Transcript",
     "",

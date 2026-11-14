@@ -97,6 +97,21 @@ describe("renderMechanicalHandoff", () => {
     }
   });
 
+  it("fills the provider from the agent record and labels the current state as an unverified snapshot", () => {
+    const doc = renderMechanicalHandoff({
+      agentId: "agent-a",
+      workspaceId: "w",
+      cwd: "/work/a",
+      provider: "claude",
+      timeline: timeline([{ type: "assistant_message", text: "Blocked on the vault." }]),
+      now: 1_000,
+    });
+    expect(doc).toContain("- Provider: claude");
+    expect(doc).not.toContain("Provider: unknown");
+    expect(doc).toContain("# Current state\n\nAs of 1970-01-01T00:00:01.000Z, unverified");
+    expect(doc).toContain("Blocked on the vault.");
+  });
+
   it("adds the repo state when it has some", () => {
     const doc = renderMechanicalHandoff({
       agentId: "agent-a",
@@ -302,7 +317,10 @@ describe("previousHandoffPath", () => {
       previousHandoff: "# Task\nThe original goal",
     });
     expect(doc).toContain("## Previous handoff");
-    expect(doc).toContain("The original goal");
+    // Quoted, so its own headings are not the draft's: a writer reads one Context and one Current state.
+    expect(doc).toContain("> # Task\n> The original goal");
+    expect(doc).toContain("older than the Generated time");
+    expect(doc.split("\n").filter((line) => line === "# Task")).toHaveLength(1);
   });
 });
 

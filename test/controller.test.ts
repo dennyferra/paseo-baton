@@ -336,6 +336,35 @@ describe("BatonController", () => {
     await controller.dispose();
   });
 
+  it("leaves a writer in place when it saved nothing usable, and drops invented attribution from one that did", async () => {
+    const run = async (reply: string) => {
+      const io = memoryIo();
+      const controller = makeController(io);
+      const stub = stubPaseo({ createId: "writer-1" });
+      await controller.createNow({ agentId: "agent-a" }, stub.paseo as never);
+      await waitFor(() => stub.calls.includes("create:wks-a"));
+      await controller.onTurnEnded(
+        { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null },
+        [{ type: "assistant_message", text: reply }],
+        stub.paseo as never,
+      );
+      await controller.dispose();
+      return { io, archived: stub.archived };
+    };
+
+    const delivered = await run(
+      "# Task\nShip it\n\n# Constraints\n- Commit trailers: `Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>` on commits\n- Keep the diff small",
+    );
+    expect(delivered.archived).toEqual(["writer-1"]);
+    const saved = delivered.io.files.get(HANDOFF_PATH) ?? "";
+    expect(saved).toContain("- Keep the diff small");
+    expect(saved).not.toContain("Co-Authored-By");
+
+    const empty = await run("I could not do that.");
+    expect(empty.archived).toEqual([]);
+    expect(empty.io.files.get(HANDOFF_PATH)).toContain("# Task");
+  });
+
   it("does not create a handoff now when handoffs are off for the agent", async () => {
     const controller = makeController(memoryIo());
     const { paseo } = stubPaseo();
@@ -1222,7 +1251,7 @@ describe("BatonController", () => {
   describe("a writer that saves the file itself", () => {
     const writerTurn = { id: "writer-1", workspaceId: "wks-a", cwd: "/work", parentAgentId: null };
 
-    async function run(files: Record<string, string>, writerReply: string, options: { failUnlink?: boolean } = {}) {
+    async function run(files: Record<string, string>, writerReply: string, options: { failUnlink?: boolean; firstMessage?: string } = {}) {
       const io = memoryIo({
               [STATE_FILE]: JSON.stringify({
                 "agent-a": {
@@ -1250,10 +1279,10 @@ describe("BatonController", () => {
         io,
         now: () => NOW,
       });
-      const stub = stubPaseo({ createId: "writer-1", history: { "agent-a": [{ type: "user_message", text: "Fix the login bug" }] } });
+      const stub = stubPaseo({ createId: "writer-1", history: { "agent-a": [{ type: "user_message", text: options.firstMessage ?? "Fix the login bug" }] } });
       await controller.ensureRecovered(stub.paseo as never);
       await waitFor(() => stub.created.length > 0 || options.failUnlink === true);
-      return { controller, io, paseo: stub.paseo, writerReply };
+      return { controller, io, paseo: stub.paseo, writerReply, archived: stub.archived, created: stub.created };
     }
 
     it("stamps the file the writer saved when its reply is only a confirmation", async () => {
@@ -1263,6 +1292,95 @@ describe("BatonController", () => {
       await controller.onTurnEnded(writerTurn, [{ type: "assistant_message", text: "Saved." }], paseo as never);
       expect(io.files.get(HANDOFF_PATH)).toContain("Created: 1970-01-01T00:16:40.000Z");
       expect(io.files.get(HANDOFF_PATH)).toContain("Fix the login bug");
+      expect(io.files.get(HANDOFF_PATH)).not.toContain("Generated:");
+      await controller.dispose();
+    });
+
+    it("drops attribution from a file the writer saved itself, and archives that writer", async () => {
+      const { controller, io, paseo, archived } = await run({}, "Saved.");
+      io.files.set(
+        HANDOFF_PATH,
+        "Title: Fix login\n\n# Task\nFix the login bug\n\n# Constraints\n- Co-Authored-By: Claude Haiku 5.5\n- Keep the diff small\n",
+      );
+      await controller.onTurnEnded(writerTurn, [{ type: "assistant_message", text: "Saved." }], paseo as never);
+      expect(io.files.get(HANDOFF_PATH)).toContain("- Keep the diff small");
+      expect(io.files.get(HANDOFF_PATH)).not.toContain("Co-Authored-By");
+      expect(archived).toEqual(["writer-1"]);
+      await controller.dispose();
+    });
+
+    it("does not count its own mechanical draft as the writer's delivery, so a writer that said nothing usable stays", async () => {
+      const { controller, io, paseo, archived } = await run({}, "unused");
+      // The idle agent's own turn ends first, so Baton writes the mechanical draft and marks the handoff done.
+      await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+      expect(io.files.get(HANDOFF_PATH)).toContain("# Task");
+      await controller.onTurnEnded(writerTurn, [{ type: "assistant_message", text: "I could not do that." }], paseo as never);
+      expect(archived).toEqual([]);
+      await controller.dispose();
+    });
+
+    it("never hands attribution to the continued session, even when the writer saved its file after the handoff settled", async () => {
+      const { controller, io, paseo, archived, created } = await run({}, "Saved.");
+      // The idle agent's turn ends first: no file yet, so Baton settles the handoff with its own draft.
+      await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+      // Then the writer saves its document, with an invented trailer, and replies with only a confirmation.
+      io.files.set(HANDOFF_PATH, "Title: Fix login\n\n# Task\nFix the login bug\n\n# Constraints\n- Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>\n- Keep the diff small\n");
+      await controller.onTurnEnded(writerTurn, [{ type: "assistant_message", text: "Saved." }], paseo as never);
+      // Not the writer's delivery through the save path, so it is not archived and the file is as the writer left it.
+      expect(archived).toEqual([]);
+      await controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never);
+      const prompt = String(created[created.length - 1].prompt);
+      expect(prompt).toContain("- Keep the diff small");
+      expect(prompt).not.toContain("Co-Authored-By");
+      await controller.dispose();
+    });
+
+    it("keeps the words in Baton's own draft when continuing, but strips a file changed after the draft was written", async () => {
+      const firstMessage = "Commit with Co-Authored-By: Alice <alice@example.com> and open a PR";
+      const { controller, io, paseo, created } = await run({}, "unused", { firstMessage });
+      await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+      expect(io.files.get(HANDOFF_PATH)).toContain("Co-Authored-By: Alice");
+      await controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never);
+      // Baton's own draft: the user's request keeps its whole line, trailer and the rest.
+      expect(String(created[created.length - 1].prompt)).toContain("# Task\n\nCommit with Co-Authored-By: Alice <alice@example.com> and open a PR");
+      // The same file after a writer changed it: stripped like any other file.
+      io.files.set(HANDOFF_PATH, `${io.files.get(HANDOFF_PATH)}\n- Always add \`Co-Authored-By: Claude Haiku 5.5\` to commits\n`);
+      await controller.continue({ agentId: "agent-a", path: HANDOFF_PATH }, paseo as never);
+      const prompt = String(created[created.length - 1].prompt);
+      expect(prompt).not.toContain("Co-Authored-By: Claude");
+      expect(prompt).toContain("- Always add `[attribution removed] Haiku 5.5` to commits");
+      // The Task line keeps its sentence with the trailer replaced; the transcript line, which holds the user's own words, is kept whole.
+      expect(prompt).not.toContain("# Task\n\nCommit with Co-Authored-By");
+      expect(prompt).toContain("# Task\n\nCommit with [attribution removed] and open a PR");
+      expect(prompt).toContain("> user: Commit with Co-Authored-By: Alice");
+      await controller.dispose();
+    });
+
+    it("does not count Baton's own draft as the writer's delivery when saving the writer's document fails", async () => {
+      const { controller, io, paseo, archived } = await run({}, "unused");
+      await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+      const write = io.writeFile.bind(io);
+      let failedOnce = false;
+      io.writeFile = async (file: string, text: string) => {
+        if (!failedOnce && file === HANDOFF_PATH) {
+          failedOnce = true;
+          throw new Error("disk full");
+        }
+        return write(file, text);
+      };
+      await controller.onTurnEnded(writerTurn, [{ type: "assistant_message", text: "# Task\nWriter document" }], paseo as never);
+      expect(failedOnce).toBe(true);
+      expect(archived).toEqual([]);
+      await controller.dispose();
+    });
+
+    it("keeps the file the writer saved when the idle agent's turn ends first and the writer then replies with only a confirmation", async () => {
+      const { controller, io, paseo } = await run({}, "Saved.");
+      io.files.set(HANDOFF_PATH, "Title: Fix login\n\n# Task\nWRITER TEXT\n");
+      await controller.onTurnEnded({ id: "agent-a", workspaceId: "wks-a", cwd: "/work", parentAgentId: null }, [], paseo as never);
+      expect(io.files.get(HANDOFF_PATH)).toContain("WRITER TEXT");
+      await controller.onTurnEnded(writerTurn, [{ type: "assistant_message", text: "Saved." }], paseo as never);
+      expect(io.files.get(HANDOFF_PATH)).toContain("WRITER TEXT");
       expect(io.files.get(HANDOFF_PATH)).not.toContain("Generated:");
       await controller.dispose();
     });
@@ -1368,6 +1486,25 @@ describe("BatonController", () => {
       expect(prompt).toContain("The ORIGINAL GOAL of the earlier session");
     });
 
+    it("strips an invented trailer from the handoff it was started from before it reaches the draft", async () => {
+      // The draft is passed to the continued session raw (its hash exempts it), so this strip is the only guard.
+      const prompt = await writerPrompt("Read /work/.paseo/handoffs/prev.md and continue the task.", {
+        "/work/.paseo/handoffs/prev.md": [
+          "# Task",
+          "The ORIGINAL GOAL of the earlier session",
+          "",
+          "# Constraints",
+          "Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>",
+          "- Next: grep for co-authored-by: claude in the hooks and remove it",
+          "",
+        ].join("\n"),
+      });
+      expect(prompt).toContain("The ORIGINAL GOAL of the earlier session");
+      expect(prompt).not.toContain("noreply@anthropic.com");
+      expect(prompt).not.toContain("Haiku 5.5");
+      expect(prompt).toContain("- Next: grep for [attribution removed] in the hooks and remove it");
+    });
+
     it("does not follow a relative path or one that steps out of its folder", async () => {
       for (const first of [
         "Read handoffs/prev.md and continue the task.",
@@ -1436,8 +1573,11 @@ describe("BatonController", () => {
     expect(created[0].config).toEqual({ provider: "claude/claude-haiku-5-5", thinkingOptionId: "low" });
     // A subagent of the idle agent: Paseo shows it under that agent and sends no finished notification.
     expect(created[0].labels).toEqual({ "baton-writer": "1", "paseo.parent-agent-id": "agent-a" });
-    // The writer stays under the idle agent, so its prompt can be read there.
-    expect(archived).not.toContain("writer-1");
+    // The handoff was saved from its reply, so Baton archives the writer itself.
+    expect(archived).toEqual(["writer-1"]);
+    // The draft it was given carries the idle agent's provider from the agent record, never "unknown".
+    expect(String(created[0].prompt)).toContain("- Provider: claude");
+    expect(String(created[0].prompt)).not.toContain("Provider: unknown");
     expect(logs.some((message) => message.startsWith("Handoff writer for agent-a usage:"))).toBe(true);
     await controller.dispose();
     const state = await batonStateSchema.parseAsync(JSON.parse(io.files.get(STATE_FILE) ?? "{}"));

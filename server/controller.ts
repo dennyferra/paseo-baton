@@ -2,6 +2,7 @@ import type { PaseoApi, PaseoAgent } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { PluginSettings } from "@getpaseo/plugin/server";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import path, { dirname } from "node:path";
 import { promisify } from "node:util";
 import type { BatonEntry, BatonRowData, BatonState, BatonSettings, ContextUsageReading, HandoffInfo } from "../shared/baton";
@@ -40,6 +41,7 @@ import {
   extractTitleFromDocument,
   isHandoffDocument,
   stampHandoffDocument,
+  stripAttributionLines,
 } from "./handoff";
 import {
   ContextStateStore,
@@ -73,6 +75,14 @@ export interface BatonControllerDeps {
   io?: BatonStoreIo;
   now?: () => number;
   openFile?: (filePath: string) => Promise<void>;
+}
+
+function stripAttributionLinesIfAny(text: string | undefined): string | undefined {
+  return text === undefined ? undefined : stripAttributionLines(text);
+}
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 function buildProviderModel(provider: string, model: string | null): string {
@@ -160,6 +170,8 @@ export class BatonController {
   private lastTimeline = new Map<string, { items: readonly AgentTimelineItem[]; cut: boolean }>();
   private workspaceDirCache = new Map<string, string | null>();
   private writerAgentIds = new Set<string>();
+  /** Hash of the mechanical draft Baton wrote at each handoff path, so continuing can tell it from a file a writer saved. */
+  private mechanicalDraftHashes = new Map<string, string>();
   private pathNotices = new Map<string, string>();
   private writerByAgentId = new Map<string, string>();
   private housekeepingTimer: ReturnType<typeof setInterval> | null = null;
@@ -230,8 +242,11 @@ export class BatonController {
       // The writer's own usage shows on its chip, but it never gets a prompt.
       await this.checkThreshold(agent, paseo, { prompt: false });
       const document = timeline.length > 0 ? extractHandoffDocument(timeline) : await this.readWriterDocument(agent.id, paseo);
-      await this.finalizeHandoff(originalAgentId, paseo, document);
+      const delivered = await this.finalizeHandoff(originalAgentId, paseo, document);
       await this.logWriterUsage(originalAgentId, agent.id, paseo);
+      // Archived only once its handoff is saved. A writer that delivered nothing stays, so what it was given and
+      // what it said can still be read, and so a failed delivery is not hidden.
+      if (delivered) await this.archiveAgent(paseo, agent.id);
       return;
     }
     await this.checkThreshold(agent, paseo);
@@ -527,12 +542,13 @@ export class BatonController {
       agentId: entry.agentId,
       workspaceId: entry.workspaceId,
       cwd,
-      provider: null,
+      provider: await this.agentProvider(paseo, entry.agentId),
       timeline: conversation?.items ?? [],
       now: this.now(),
       limits: DETAIL_LIMITS[settings.conversationDetail],
       historyCut: conversation?.cut ?? false,
-      previousHandoff: await this.readPreviousHandoff(conversation?.items ?? []),
+      // Stripped here: the draft's hash exempts it when continuing, so an earlier file a writer touched must not ride in.
+      previousHandoff: stripAttributionLinesIfAny(await this.readPreviousHandoff(conversation?.items ?? [])),
       repoFacts: settings.includeRepoState ? await gatherRepoFacts(cwd) : "",
     });
     this.log(`Handoff draft for ${entry.agentId} is ${draft.length} characters`);
@@ -730,7 +746,11 @@ export class BatonController {
     if (!entry?.path) throw new Error(NO_HANDOFF_READY);
     let text: string;
     try {
-      text = await this.io.readFile(entry.path);
+      // Stripped here too: a writer can save its file after the handoff settled, which never passes through the save path.
+      const raw = await this.io.readFile(entry.path);
+      // Baton's own draft holds the user's and agent's words, and a pasted trailer there is theirs, so it is kept. Any other
+      // file, including one a writer saved or changed after the draft was written, is stripped.
+      text = this.mechanicalDraftHashes.get(entry.path) === sha256(raw) ? raw : stripAttributionLines(raw);
     } catch {
       throw new Error("The handoff file is missing.");
     }
@@ -926,7 +946,7 @@ export class BatonController {
       for (const entry of entries) {
         knownAgentIds.add(entry.agent.id);
         // Writers of an earlier version stood alone, and one still running after a restart will not be heard
-        // from again; a finished writer under its parent stays so its prompt can be read.
+        // from again; a finished writer under its parent stays, since only one whose handoff was saved is archived.
         const labels = entry.agent.labels;
         if (labels?.[BATON_WRITER_LABEL] === "1" && (!labels[PARENT_AGENT_ID_LABEL] || entry.agent.status === "running")) {
           void this.archiveAgent(paseo, entry.agent.id);
@@ -1132,6 +1152,16 @@ export class BatonController {
     }
   }
 
+  /** The agent's provider from its record, or null when the record cannot be read. */
+  private async agentProvider(paseo: PaseoApi, agentId: string): Promise<string | null> {
+    try {
+      return (await paseo.agents.ref(agentId).refresh())?.agent.provider ?? null;
+    } catch (error: unknown) {
+      this.log(`Reading the provider of ${agentId} failed: ${String(error)}`);
+      return null;
+    }
+  }
+
   private async agentProviderModel(
     paseo: PaseoApi,
     agentId: string,
@@ -1167,7 +1197,7 @@ export class BatonController {
       config: thinkingOptionId ? { provider: providerModel, thinkingOptionId } : { provider: providerModel },
       title: BATON_WRITER_TITLE,
       // Marked as a subagent of the idle agent, so Paseo shows it under that agent, does not notify when it
-      // finishes, and archives it with its parent. It stays after it finishes, so its prompt can be read there.
+      // finishes, and archives it with its parent. Baton archives it itself once its handoff is saved.
       labels: { [BATON_WRITER_LABEL]: "1", [PARENT_AGENT_ID_LABEL]: entry.agentId },
       prompt: buildWriterHandoffPrompt(draft),
     });
@@ -1193,26 +1223,34 @@ export class BatonController {
     }
   }
 
-  /** `useSavedFile` is false when an old file could not be cleared, so it must not pass for the new handoff. */
+  /**
+   * `useSavedFile` is false when an old file could not be cleared, so it must not pass for the new handoff.
+   * True when the handoff file was saved from the writer's reply or file, false when it fell back to the mechanical draft or nothing was written.
+   */
   private async finalizeHandoff(
     agentId: string,
     paseo: PaseoApi,
     document: string | null = null,
     useSavedFile = true,
-  ): Promise<void> {
+  ): Promise<boolean> {
     this.clearFallbackTimer(agentId);
     this.pendingHandoff.delete(agentId);
     const entry = this.entries.get(agentId);
-    if (!entry) return;
+    if (!entry) return false;
     const handoffPath = await this.pathForEntry(entry, paseo);
     if (!handoffPath) {
       this.markSkippedEntry(agentId);
-      return;
+      return false;
     }
-    const saved = await this.saveHandoffFile(agentId, handoffPath, document, useSavedFile);
+    // The handoff was already settled (the idle agent's own turn ended first). With no document from the writer the
+    // file on disk is already the recorded one, the mechanical draft or a file the writer saved, so leave it and do
+    // not pass it off as the writer's delivery. A document the writer did send still replaces it.
+    if (entry.status === "done" && document === null) return false;
+    const saved = await this.saveHandoffFile(agentId, handoffPath, document, useSavedFile && entry.status !== "done");
     const path = saved ? handoffPath : await this.writeMechanical(entry, paseo);
     const done = markDone(entry, path, this.now());
     await this.finishHandoff(agentId, done, paseo);
+    return saved;
   }
 
   /**
@@ -1239,7 +1277,8 @@ export class BatonController {
   private async writeStamped(agentId: string, handoffPath: string, text: string): Promise<boolean> {
     try {
       await this.io.mkdir(dirname(handoffPath));
-      await this.io.writeFile(handoffPath, stampHandoffDocument(text, this.now()));
+      // Also the file a writer saved itself, which never passed through extractHandoffDocument.
+      await this.io.writeFile(handoffPath, stampHandoffDocument(stripAttributionLines(text), this.now()));
       return true;
     } catch (error: unknown) {
       this.log(`Writing the handoff for ${agentId} failed: ${String(error)}`);
@@ -1253,6 +1292,7 @@ export class BatonController {
     await this.io.mkdir(path.dirname(handoffPath));
     const content = await this.buildDraft(entry, handoffPath, paseo, await this.readSettings());
     await this.io.writeFile(handoffPath, content);
+    this.mechanicalDraftHashes.set(handoffPath, sha256(content));
     return handoffPath;
   }
 
